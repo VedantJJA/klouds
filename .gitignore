@@ -1,0 +1,39 @@
+# Binaries
+bin/
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+
+# Build
+dist/
+
+# Environment
+.env
+
+# Data directory
+data/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Go
+vendor/
+
+# Node (dashboard)
+dashboard/node_modules/
+dashboard/.svelte-kit/
+dashboard/build/
+
+# Docker volumes
+klouds_pg_data/
+klouds_caddy_data/
+klouds_caddy_config/

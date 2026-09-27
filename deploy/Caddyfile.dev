@@ -1,0 +1,30 @@
+# Klouds — Development Caddyfile
+# For local development, proxies the API and handles subdomains on localhost.
+
+{
+    admin :2019
+    # Use HTTP in dev (no real certs needed)
+    auto_https off
+}
+
+# Dashboard & API — accessible at http://localhost
+:80 {
+    # API routes
+    handle /api/* {
+        reverse_proxy localhost:8080
+    }
+
+    handle /health {
+        reverse_proxy localhost:8080
+    }
+
+    # Dashboard (SvelteKit dev server) — uncomment when dashboard is set up
+    # handle {
+    #     reverse_proxy localhost:5173
+    # }
+
+    # For now, serve a simple status page
+    handle {
+        respond "☁️ Klouds is running. API available at /api" 200
+    }
+}

@@ -1,0 +1,47 @@
+# Klouds — Development Docker Compose
+# Start with: docker compose -f deploy/docker-compose.dev.yml up -d
+#
+# This starts PostgreSQL and Caddy for local development.
+# The Go API server runs natively via `go run` or `air` for hot-reload.
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: klouds-postgres
+    ports:
+      - "5432:5432"
+    environment:
+      POSTGRES_USER: klouds
+      POSTGRES_PASSWORD: klouds
+      POSTGRES_DB: klouds
+    volumes:
+      - klouds_pg_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U klouds"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+  caddy:
+    image: caddy:2-alpine
+    container_name: klouds-caddy
+    ports:
+      - "80:80"
+      - "443:443"
+      - "2019:2019"  # Caddy admin API
+    volumes:
+      - ./Caddyfile.dev:/etc/caddy/Caddyfile
+      - klouds_caddy_data:/data
+      - klouds_caddy_config:/config
+    restart: unless-stopped
+
+networks:
+  default:
+    name: klouds-internal
+    driver: bridge
+
+volumes:
+  klouds_pg_data:
+  klouds_caddy_data:
+  klouds_caddy_config:

@@ -1,0 +1,97 @@
+# Klouds — Task Runner Configuration
+# Install: go install github.com/go-task/task/v3/cmd/task@latest
+# Usage: task dev, task build, task migrate, etc.
+
+version: '3'
+
+vars:
+  BINARY_NAME: klouds-server
+  MAIN_PKG: ./cmd/klouds-server
+
+dotenv: ['.env']
+
+tasks:
+  default:
+    desc: "Show available tasks"
+    cmds:
+      - task --list
+
+  dev:
+    desc: "Run the API server in development mode"
+    env:
+      KLOUDS_SECRET_KEY: "dev-secret-key-change-in-production!!"
+      KLOUDS_DOMAIN: "localhost"
+      KLOUDS_PORT: "8080"
+      DATABASE_URL: "postgres://klouds:klouds@localhost:5432/klouds?sslmode=disable"
+      KLOUDS_DATA_DIR: "./data"
+    cmds:
+      - go run {{.MAIN_PKG}}
+
+  build:
+    desc: "Build the server binary"
+    cmds:
+      - go build -ldflags="-s -w" -o bin/{{.BINARY_NAME}} {{.MAIN_PKG}}
+
+  build-arm64:
+    desc: "Cross-compile for ARM64 (Oracle Ampere A1)"
+    env:
+      GOOS: linux
+      GOARCH: arm64
+      CGO_ENABLED: "0"
+    cmds:
+      - go build -ldflags="-s -w" -o bin/{{.BINARY_NAME}}-arm64 {{.MAIN_PKG}}
+
+  build-linux-amd64:
+    desc: "Cross-compile for Linux AMD64"
+    env:
+      GOOS: linux
+      GOARCH: amd64
+      CGO_ENABLED: "0"
+    cmds:
+      - go build -ldflags="-s -w" -o bin/{{.BINARY_NAME}}-amd64 {{.MAIN_PKG}}
+
+  test:
+    desc: "Run all tests"
+    cmds:
+      - go test ./... -v
+
+  lint:
+    desc: "Run linter"
+    cmds:
+      - golangci-lint run ./...
+
+  db-up:
+    desc: "Start the development database"
+    cmds:
+      - docker compose -f deploy/docker-compose.dev.yml up -d postgres
+
+  db-down:
+    desc: "Stop the development database"
+    cmds:
+      - docker compose -f deploy/docker-compose.dev.yml down
+
+  infra-up:
+    desc: "Start all dev infrastructure (PostgreSQL + Caddy)"
+    cmds:
+      - docker compose -f deploy/docker-compose.dev.yml up -d
+
+  infra-down:
+    desc: "Stop all dev infrastructure"
+    cmds:
+      - docker compose -f deploy/docker-compose.dev.yml down
+
+  migrate-up:
+    desc: "Apply database migrations"
+    cmds:
+      - go run {{.MAIN_PKG}} --migrate-only
+
+  clean:
+    desc: "Clean build artifacts"
+    cmds:
+      - rm -rf bin/
+      - rm -rf data/
+
+  tidy:
+    desc: "Tidy Go modules"
+    cmds:
+      - go mod tidy

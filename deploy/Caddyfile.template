@@ -1,0 +1,42 @@
+# Klouds — Production Caddyfile Template
+# Replace KLOUDS_DOMAIN with your actual domain.
+# This file is a template; the actual config is generated dynamically
+# via the Caddy JSON API by the Klouds API server.
+
+{
+    email admin@{$KLOUDS_DOMAIN}
+    admin :2019
+}
+
+# Platform dashboard & API
+{$KLOUDS_DOMAIN} {
+    # API
+    handle /api/* {
+        reverse_proxy klouds-api:8080
+    }
+
+    handle /health {
+        reverse_proxy klouds-api:8080
+    }
+
+    # Dashboard (SvelteKit SSR)
+    handle {
+        reverse_proxy klouds-dashboard:3000
+    }
+
+    # Security headers
+    header {
+        X-Content-Type-Options nosniff
+        X-Frame-Options DENY
+        Referrer-Policy strict-origin-when-cross-origin
+        Strict-Transport-Security "max-age=31536000; includeSubDomains"
+    }
+}
+
+# Wildcard subdomain routing for user services
+# This is a catch-all; the Klouds API dynamically manages routes via Caddy's JSON API.
+*.{$KLOUDS_DOMAIN} {
+    # Dynamic upstream resolution happens via Caddy JSON API
+    # This block is a placeholder for initial setup
+    respond "Service not found" 404
+}
