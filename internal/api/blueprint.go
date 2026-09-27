@@ -75,10 +75,7 @@ func (h *BlueprintHandler) Detect(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	branch := req.Branch
-	if branch == "" {
-		branch = "main"
-	}
+	branch := strings.TrimSpace(req.Branch)
 
 	res, err := blueprint.DetectFromRepo(r.Context(), req.RepoURL, branch, h.dataDir)
 	if err != nil {
@@ -173,7 +170,7 @@ func (h *BlueprintHandler) Apply(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		bp = res.Blueprint
-		if branch == "" && res.DetectedBranch != "" {
+		if (branch == "" || branch == "main") && res.DetectedBranch != "" {
 			branch = res.DetectedBranch
 		}
 	} else {

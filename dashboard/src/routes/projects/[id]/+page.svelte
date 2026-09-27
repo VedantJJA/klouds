@@ -47,7 +47,7 @@
   let showBlueprintModal = $state(false);
   let bpMode = $state<'repo' | 'yaml'>('repo');
   let bpRepoUrl = $state('');
-  let bpBranch = $state('main');
+  let bpBranch = $state('');
   let bpYaml = $state('');
   let bpScanning = $state(false);
   let bpApplying = $state(false);
@@ -122,7 +122,7 @@
     try {
       const res = await api.detectBlueprint(projectId, bpRepoUrl.trim(), bpBranch.trim() || undefined);
       detectedResult = res;
-      if (res.detected_branch && !bpBranch.trim()) {
+      if (res.detected_branch) {
         bpBranch = res.detected_branch;
       }
     } catch (err: any) {
@@ -498,7 +498,7 @@
               id="bp-branch"
               type="text"
               class="form-input"
-              placeholder="main"
+              placeholder="master, main, or auto-detect"
               bind:value={bpBranch}
             />
           </div>
