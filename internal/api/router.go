@@ -48,20 +48,22 @@ func NewRouter(cfg RouterConfig) *chi.Mux {
 		MaxAge:           300,
 	}))
 
-	// Health check (unauthenticated)
-	r.Get("/health", func(w http.ResponseWriter, r *http.Request) {
+	// Health check (unauthenticated) - supports GET and HEAD
+	healthFunc := func(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, map[string]string{"status": "ok", "service": "klouds"})
-	})
+	}
+	r.Get("/health", healthFunc)
+	r.Head("/health", healthFunc)
 
 	// Initialize handlers
 	authHandler := NewAuthHandler(cfg.Pool, cfg.TokenSvc)
 	projectHandler := NewProjectHandler(cfg.Pool)
-	serviceHandler := NewServiceHandler(cfg.Pool, cfg.Containers, cfg.Engine, cfg.Deployer, cfg.Domain)
+	serviceHandler := NewServiceHandler(cfg.Pool, cfg.Containers, cfg.Engine, cfg.Deployer, cfg.Encryptor, cfg.Domain)
 	dbHandler := NewDatabaseHandler(cfg.Pool, cfg.Containers, cfg.Encryptor, cfg.Domain, cfg.DataDir)
 	adminHandler := NewAdminHandler(cfg.Pool, cfg.Containers)
 	metricsHandler := NewMetricsHandler()
 	webhookHandler := webhook.NewHandler(cfg.Pool, cfg.Engine, cfg.Deployer)
-	blueprintHandler := NewBlueprintHandler(cfg.Pool, cfg.DataDir, cfg.Encryptor, cfg.Containers, cfg.Engine, cfg.Deployer)
+	blueprintHandler := NewBlueprintHandler(cfg.Pool, cfg.DataDir, cfg.Encryptor, cfg.Containers, cfg.Engine, cfg.Deployer, cfg.Domain)
 
 	r.Route("/api", func(r chi.Router) {
 		// --- Public routes (no auth) ---

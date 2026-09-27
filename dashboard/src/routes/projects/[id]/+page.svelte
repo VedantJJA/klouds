@@ -120,7 +120,11 @@
     bpSuccess = '';
     detectedResult = null;
     try {
-      detectedResult = await api.detectBlueprint(projectId, bpRepoUrl.trim(), bpBranch.trim() || 'main');
+      const res = await api.detectBlueprint(projectId, bpRepoUrl.trim(), bpBranch.trim() || undefined);
+      detectedResult = res;
+      if (res.detected_branch && !bpBranch.trim()) {
+        bpBranch = res.detected_branch;
+      }
     } catch (err: any) {
       bpError = err.message || 'Failed to detect services in repository';
     } finally {
@@ -136,7 +140,7 @@
     try {
       let payload: { repo_url?: string; branch?: string; yaml_content?: string } = {};
       if (bpMode === 'repo') {
-        payload = { repo_url: bpRepoUrl.trim(), branch: bpBranch.trim() || 'main' };
+        payload = { repo_url: bpRepoUrl.trim(), branch: bpBranch.trim() || detectedResult?.detected_branch || '' };
       } else {
         payload = { yaml_content: bpYaml.trim() };
       }

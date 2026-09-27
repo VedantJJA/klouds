@@ -81,6 +81,7 @@ export interface Blueprint {
 export interface DetectionResult {
   blueprint: Blueprint;
   source: string;
+  detected_branch?: string;
 }
 
 export interface Database {
@@ -102,7 +103,9 @@ export interface Deployment {
   commit_hash?: string;
   commit_message?: string;
   status: 'queued' | 'building' | 'deploying' | 'active' | 'failed' | 'cancelled';
+  build_log?: string;
   build_logs?: string;
+  duration_sec?: number;
   created_at: string;
   finished_at?: string;
 }
@@ -294,6 +297,12 @@ class ApiClient {
 
   async getDeployments(serviceId: string): Promise<Deployment[]> {
     return this.request(`/api/services/${serviceId}/deployments`);
+  }
+
+  async deployService(serviceId: string): Promise<Deployment> {
+    return this.request(`/api/services/${serviceId}/deploy`, {
+      method: 'POST'
+    });
   }
 
   // Databases

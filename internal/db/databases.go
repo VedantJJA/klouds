@@ -237,6 +237,9 @@ func scanDeployment(row interface{ Scan(dest ...interface{}) error }) (Deploymen
 		&d.ID, &d.ServiceID, &d.UserID, &d.Status, &d.CommitSHA, &d.CommitMsg,
 		&d.ImageTag, &d.Trigger, &d.BuildLog, &d.DurationSec, &d.CreatedAt, &d.FinishedAt,
 	)
+	if err == nil {
+		d.BuildLogs = d.BuildLog
+	}
 	return d, err
 }
 

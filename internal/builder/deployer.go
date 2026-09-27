@@ -68,10 +68,15 @@ func (d *Deployer) Deploy(ctx context.Context, req DeployRequest) error {
 		Msg("Beginning zero-downtime blue-green deployment")
 
 	// Step 1: Start new container (green)
+	port := int(svc.Port)
+	if port <= 0 {
+		port = 3000
+	}
+
 	cfg := container.ServiceConfig{
 		Name:         newContainerName,
 		Image:        req.ImageTag,
-		Port:         int(svc.Port),
+		Port:         port,
 		EnvVars:      req.EnvVars,
 		CPULimit:     int64(svc.CpuLimit),
 		MemoryLimit:  int64(svc.MemoryLimit) * 1024 * 1024,
@@ -94,12 +99,18 @@ func (d *Deployer) Deploy(ctx context.Context, req DeployRequest) error {
 		healthCheckPath = *svc.HealthCheckPath
 	}
 
-	healthy := d.waitForHealth(ctx, newContainerName, int(svc.Port), healthCheckPath, 30*time.Second)
+	containerTarget := newContainerName
+	if ip, err := d.containers.GetContainerIP(ctx, newContainerID); err == nil && ip != "" {
+		containerTarget = ip
+	}
+
+	healthy := d.waitForHealth(ctx, containerTarget, port, healthCheckPath, 30*time.Second)
 	if !healthy {
 		// Rollback: Tear down green container, leave old container running!
 		log.Warn().
 			Str("service", svc.Name).
 			Str("container", newContainerName).
+			Str("target", containerTarget).
 			Msg("New container failed healthcheck. Rolling back...")
 
 		_ = d.containers.StopContainer(ctx, newContainerID)
@@ -112,8 +123,8 @@ func (d *Deployer) Deploy(ctx context.Context, req DeployRequest) error {
 	if d.caddy != nil && svc.Subdomain != "" {
 		route := caddy.Route{
 			Subdomain:   svc.Subdomain,
-			BackendHost: newContainerName,
-			BackendPort: int(svc.Port),
+			BackendHost: containerTarget,
+			BackendPort: port,
 		}
 		if err := d.caddy.AddRoute(route); err != nil {
 			log.Error().Err(err).Msg("Failed to update Caddy route")

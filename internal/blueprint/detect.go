@@ -13,16 +13,13 @@ import (
 
 // DetectionResult contains the detected blueprint and discovery source.
 type DetectionResult struct {
-	Blueprint *Blueprint `json:"blueprint"`
-	Source    string     `json:"source"` // "blueprint", "docker_compose", "monorepo_detected", "single_detected"
+	Blueprint      *Blueprint `json:"blueprint"`
+	Source         string     `json:"source"` // "blueprint", "docker_compose", "monorepo_detected", "single_detected"
+	DetectedBranch string     `json:"detected_branch,omitempty"`
 }
 
 // DetectFromRepo clones a repository shallowly to inspect its structure and discover services.
 func DetectFromRepo(ctx context.Context, repoURL, branch, dataDir string) (*DetectionResult, error) {
-	if branch == "" {
-		branch = "main"
-	}
-
 	targetBase := dataDir
 	if targetBase != "" {
 		if err := os.MkdirAll(targetBase, 0755); err != nil {
@@ -41,17 +38,42 @@ func DetectFromRepo(ctx context.Context, repoURL, branch, dataDir string) (*Dete
 	}
 	defer os.RemoveAll(tempDir)
 
-	// Shallow clone
-	cloneCmd := exec.CommandContext(ctx, "git", "clone", "--depth", "1", "-b", branch, repoURL, tempDir)
-	if out, err := cloneCmd.CombinedOutput(); err != nil {
-		// Try without branch if branch failed
+	branch = strings.TrimSpace(branch)
+	var cloneErr error
+	var cloneOut []byte
+
+	if branch != "" {
+		cloneCmd := exec.CommandContext(ctx, "git", "clone", "--depth", "1", "-b", branch, repoURL, tempDir)
+		cloneOut, cloneErr = cloneCmd.CombinedOutput()
+	} else {
+		cloneCmd := exec.CommandContext(ctx, "git", "clone", "--depth", "1", repoURL, tempDir)
+		cloneOut, cloneErr = cloneCmd.CombinedOutput()
+	}
+
+	if cloneErr != nil {
+		_ = os.RemoveAll(tempDir)
+		_ = os.MkdirAll(tempDir, 0755)
 		cloneCmdFallback := exec.CommandContext(ctx, "git", "clone", "--depth", "1", repoURL, tempDir)
 		if fallbackOut, fbErr := cloneCmdFallback.CombinedOutput(); fbErr != nil {
-			return nil, fmt.Errorf("git clone failed: %s (fallback: %s)", string(out), string(fallbackOut))
+			return nil, fmt.Errorf("git clone failed: %s (fallback: %s)", string(cloneOut), string(fallbackOut))
 		}
 	}
 
-	return DetectFromDirectory(tempDir)
+	detectedBranch := branch
+	branchCmd := exec.CommandContext(ctx, "git", "-C", tempDir, "rev-parse", "--abbrev-ref", "HEAD")
+	if out, err := branchCmd.Output(); err == nil {
+		b := strings.TrimSpace(string(out))
+		if b != "" && b != "HEAD" {
+			detectedBranch = b
+		}
+	}
+
+	res, err := DetectFromDirectory(tempDir)
+	if err != nil {
+		return nil, err
+	}
+	res.DetectedBranch = detectedBranch
+	return res, nil
 }
 
 // DetectFromDirectory inspects an extracted repository directory for blueprints or service patterns.

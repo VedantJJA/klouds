@@ -146,3 +146,65 @@ func TestDetectFromRepoLive(t *testing.T) {
 		t.Errorf("expected 1 database, got %d", len(res.Blueprint.Databases))
 	}
 }
+
+func TestParseBlueprintNestedMaps(t *testing.T) {
+	yamlData := `
+version: "1.0"
+services:
+  - name: vtopcc-backend
+    type: web
+    directory: "backend"
+    build:
+      engine: "node"
+      command: "npm install && npm run build"
+    deploy:
+      port: 5000
+      command: "npm run start"
+    env:
+      NODE_ENV: "production"
+      PORT: "5000"
+      JWT_SECRET:
+        generate_value: true
+
+  - name: vtopcc
+    type: static
+    directory: "frontend"
+    build:
+      command: "npm install && npm run build"
+      output_dir: "dist"
+    env:
+      VITE_API_URL: "${services.vtopcc-backend.url}"
+    routes:
+      - type: rewrite
+        source: "/api/*"
+        destination: "${services.vtopcc-backend.url}/api/*"
+      - type: rewrite
+        source: "/*"
+        destination: "/index.html"
+`
+
+	bp, err := ParseBlueprint([]byte(yamlData))
+	if err != nil {
+		t.Fatalf("unexpected error parsing blueprint: %v", err)
+	}
+
+	if len(bp.Services) != 2 {
+		t.Fatalf("expected 2 services, got %d", len(bp.Services))
+	}
+
+	b := bp.Services[0]
+	if b.Name != "vtopcc-backend" || b.RootDir != "backend" || b.Port != 5000 {
+		t.Errorf("unexpected backend service: %+v", b)
+	}
+	if b.BuildCommand != "npm install && npm run build" || b.StartCommand != "npm run start" {
+		t.Errorf("unexpected backend commands: bc=%q sc=%q", b.BuildCommand, b.StartCommand)
+	}
+
+	f := bp.Services[1]
+	if f.Name != "vtopcc" || f.RootDir != "frontend" || f.Type != "static" || f.Port != 3000 {
+		t.Errorf("unexpected frontend service: %+v", f)
+	}
+	if len(f.Routes) != 2 {
+		t.Errorf("expected 2 routes, got %d", len(f.Routes))
+	}
+}

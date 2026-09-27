@@ -2,6 +2,7 @@ package api
 
 import (
 	"net/http"
+	"strings"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -28,12 +29,13 @@ func NewBlueprintHandler(
 	containers *container.Manager,
 	engine *builder.Engine,
 	deployer *builder.Deployer,
+	domain string,
 ) *BlueprintHandler {
 	return &BlueprintHandler{
 		pool:       pool,
 		queries:    db.New(pool),
 		dataDir:    dataDir,
-		reconciler: blueprint.NewReconciler(pool, encryptor, containers, engine, deployer),
+		reconciler: blueprint.NewReconciler(pool, encryptor, containers, engine, deployer, domain),
 	}
 }
 
@@ -96,6 +98,7 @@ func (h *BlueprintHandler) Preview(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var bp *blueprint.Blueprint
+	detectedBranch := ""
 	if req.YAMLContent != "" {
 		parsed, err := blueprint.ParseBlueprint([]byte(req.YAMLContent))
 		if err != nil {
@@ -105,15 +108,13 @@ func (h *BlueprintHandler) Preview(w http.ResponseWriter, r *http.Request) {
 		bp = parsed
 	} else if req.RepoURL != "" {
 		branch := req.Branch
-		if branch == "" {
-			branch = "main"
-		}
 		res, err := blueprint.DetectFromRepo(r.Context(), req.RepoURL, branch, h.dataDir)
 		if err != nil {
 			writeError(w, http.StatusBadRequest, err.Error())
 			return
 		}
 		bp = res.Blueprint
+		detectedBranch = res.DetectedBranch
 	} else {
 		writeError(w, http.StatusBadRequest, "either yaml_content or repo_url must be provided")
 		return
@@ -124,7 +125,12 @@ func (h *BlueprintHandler) Preview(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	writeJSON(w, http.StatusOK, bp)
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"version":         bp.Version,
+		"services":        bp.Services,
+		"databases":       bp.Databases,
+		"detected_branch": detectedBranch,
+	})
 }
 
 // Apply handles POST /api/projects/{projectID}/blueprint/apply
@@ -151,10 +157,7 @@ func (h *BlueprintHandler) Apply(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var bp *blueprint.Blueprint
-	branch := req.Branch
-	if branch == "" {
-		branch = "main"
-	}
+	branch := strings.TrimSpace(req.Branch)
 
 	if req.YAMLContent != "" {
 		parsed, err := blueprint.ParseBlueprint([]byte(req.YAMLContent))
@@ -170,6 +173,9 @@ func (h *BlueprintHandler) Apply(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		bp = res.Blueprint
+		if branch == "" && res.DetectedBranch != "" {
+			branch = res.DetectedBranch
+		}
 	} else {
 		writeError(w, http.StatusBadRequest, "either yaml_content or repo_url must be provided")
 		return

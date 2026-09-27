@@ -160,6 +160,7 @@ type Deployment struct {
 	ImageTag    string     `json:"image_tag"`
 	Trigger     string     `json:"trigger"`
 	BuildLog    *string    `json:"build_log"`
+	BuildLogs   *string    `json:"build_logs,omitempty"`
 	DurationSec *int32     `json:"duration_sec"`
 	CreatedAt   time.Time  `json:"created_at"`
 	FinishedAt  *time.Time `json:"finished_at"`

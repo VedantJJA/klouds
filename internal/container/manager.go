@@ -363,6 +363,25 @@ func (m *Manager) databaseImageConfig(cfg DatabaseConfig) (image string, env []s
 	return
 }
 
+// GetContainerIP returns the container's IP address on the internal network.
+func (m *Manager) GetContainerIP(ctx context.Context, containerID string) (string, error) {
+	result, err := m.client.ContainerInspect(ctx, containerID, mobyclient.ContainerInspectOptions{})
+	if err != nil {
+		return "", err
+	}
+	if result.Container.NetworkSettings != nil && result.Container.NetworkSettings.Networks != nil {
+		if nw, ok := result.Container.NetworkSettings.Networks[m.networkName]; ok && nw != nil && nw.IPAddress.IsValid() {
+			return nw.IPAddress.String(), nil
+		}
+		for _, nw := range result.Container.NetworkSettings.Networks {
+			if nw != nil && nw.IPAddress.IsValid() {
+				return nw.IPAddress.String(), nil
+			}
+		}
+	}
+	return "", fmt.Errorf("no IP address found for container %s", containerID)
+}
+
 // Close releases the Docker client.
 func (m *Manager) Close() error {
 	return m.client.Close()

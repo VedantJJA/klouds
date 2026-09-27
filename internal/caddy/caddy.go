@@ -193,17 +193,74 @@ func (m *Manager) ApplyConfig(routes []Route) error {
 
 // AddRoute adds a single route to the running Caddy config.
 func (m *Manager) AddRoute(route Route) error {
-	// For simplicity in Phase 1, we reload the entire config.
-	// In production, we'd use PATCH to add individual routes.
-	log.Info().
-		Str("subdomain", route.Subdomain).
-		Str("backend", fmt.Sprintf("%s:%d", route.BackendHost, route.BackendPort)).
-		Msg("Route registered (will be applied on next full reload)")
+	host := fmt.Sprintf("%s.%s", route.Subdomain, m.domain)
+	upstream := fmt.Sprintf("%s:%d", route.BackendHost, route.BackendPort)
+
+	routeID := fmt.Sprintf("route-%s", route.Subdomain)
+	caddyRoute := map[string]interface{}{
+		"@id":   routeID,
+		"match": []map[string]interface{}{{"host": []string{host}}},
+		"handle": []map[string]interface{}{
+			{
+				"handler":   "reverse_proxy",
+				"upstreams": []map[string]string{{"dial": upstream}},
+			},
+		},
+		"terminal": true,
+	}
+
+	body, err := json.Marshal(caddyRoute)
+	if err != nil {
+		return err
+	}
+
+	// Try updating existing route via @id
+	req, err := http.NewRequest("PATCH", fmt.Sprintf("%s/id/%s", m.adminAPI, routeID), bytes.NewReader(body))
+	if err == nil {
+		req.Header.Set("Content-Type", "application/json")
+		resp, err := http.DefaultClient.Do(req)
+		if err == nil && resp.StatusCode == http.StatusOK {
+			resp.Body.Close()
+			log.Info().Str("host", host).Str("upstream", upstream).Msg("Caddy dynamic route updated via @id")
+			return nil
+		}
+		if resp != nil {
+			resp.Body.Close()
+		}
+	}
+
+	// If @id doesn't exist, insert at index 0 of srv0 routes (before the catch-all)
+	req2, err := http.NewRequest("POST", fmt.Sprintf("%s/config/apps/http/servers/srv0/routes/0", m.adminAPI), bytes.NewReader(body))
+	if err != nil {
+		return fmt.Errorf("create caddy route request: %w", err)
+	}
+	req2.Header.Set("Content-Type", "application/json")
+	resp2, err := http.DefaultClient.Do(req2)
+	if err != nil {
+		return fmt.Errorf("send caddy route request: %w", err)
+	}
+	defer resp2.Body.Close()
+
+	if resp2.StatusCode >= 400 {
+		return fmt.Errorf("caddy route insertion returned status %d", resp2.StatusCode)
+	}
+
+	log.Info().Str("host", host).Str("upstream", upstream).Msg("Caddy dynamic route added successfully")
 	return nil
 }
 
 // RemoveRoute removes a route from the running Caddy config.
 func (m *Manager) RemoveRoute(subdomain string) error {
-	log.Info().Str("subdomain", subdomain).Msg("Route removed (will be applied on next full reload)")
+	routeID := fmt.Sprintf("route-%s", subdomain)
+	req, err := http.NewRequest("DELETE", fmt.Sprintf("%s/id/%s", m.adminAPI, routeID), nil)
+	if err != nil {
+		return err
+	}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	log.Info().Str("subdomain", subdomain).Msg("Caddy dynamic route removed")
 	return nil
 }

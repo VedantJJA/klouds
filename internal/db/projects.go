@@ -249,6 +249,39 @@ func (q *Queries) UpdateServiceContainer(ctx context.Context, id string, contain
 	return scanService(row)
 }
 
+type UpdateServiceSpecParams struct {
+	ID              string  `json:"id"`
+	Name            string  `json:"name"`
+	Type            string  `json:"type"`
+	BuildMethod     string  `json:"build_method"`
+	RepoURL         *string `json:"repo_url"`
+	Branch          *string `json:"branch"`
+	RootDirectory   string  `json:"root_directory"`
+	DockerfilePath  *string `json:"dockerfile_path"`
+	BuildCommand    *string `json:"build_command"`
+	StartCommand    *string `json:"start_command"`
+	Port            int32   `json:"port"`
+	HealthCheckPath *string `json:"health_check_path"`
+	AutoDeploy      bool    `json:"auto_deploy"`
+}
+
+func (q *Queries) UpdateServiceSpec(ctx context.Context, arg UpdateServiceSpecParams) (Service, error) {
+	row := q.db.QueryRow(ctx,
+		`UPDATE services SET
+			name = $2, type = $3, build_method = $4, repo_url = $5, branch = $6,
+			root_directory = $7, dockerfile_path = $8, build_command = $9, start_command = $10,
+			port = $11, health_check_path = $12, auto_deploy = $13, updated_at = NOW()
+		 WHERE id = $1
+		 RETURNING id, project_id, user_id, name, slug, type, status, build_method,
+			repo_url, branch, root_directory, dockerfile_path, build_command, start_command,
+			port, health_check_path, auto_deploy, container_id, image_tag,
+			subdomain, cpu_limit, memory_limit, created_at, updated_at`,
+		arg.ID, arg.Name, arg.Type, arg.BuildMethod, arg.RepoURL, arg.Branch,
+		arg.RootDirectory, arg.DockerfilePath, arg.BuildCommand, arg.StartCommand,
+		arg.Port, arg.HealthCheckPath, arg.AutoDeploy)
+	return scanService(row)
+}
+
 func (q *Queries) DeleteService(ctx context.Context, id string) error {
 	_, err := q.db.Exec(ctx, `DELETE FROM services WHERE id = $1`, id)
 	return err

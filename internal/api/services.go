@@ -11,6 +11,7 @@ import (
 	"github.com/vedant/klouds/internal/builder"
 	"github.com/vedant/klouds/internal/container"
 	"github.com/vedant/klouds/internal/db"
+	"github.com/vedant/klouds/internal/secrets"
 )
 
 // ServiceHandler handles service CRUD and lifecycle operations.
@@ -20,17 +21,19 @@ type ServiceHandler struct {
 	containers *container.Manager
 	engine     *builder.Engine
 	deployer   *builder.Deployer
+	encryptor  *secrets.Encryptor
 	domain     string // Base domain for subdomain routing
 }
 
 // NewServiceHandler creates a new service handler.
-func NewServiceHandler(pool *pgxpool.Pool, containers *container.Manager, engine *builder.Engine, deployer *builder.Deployer, domain string) *ServiceHandler {
+func NewServiceHandler(pool *pgxpool.Pool, containers *container.Manager, engine *builder.Engine, deployer *builder.Deployer, encryptor *secrets.Encryptor, domain string) *ServiceHandler {
 	return &ServiceHandler{
 		queries:    db.New(pool),
 		pool:       pool,
 		containers: containers,
 		engine:     engine,
 		deployer:   deployer,
+		encryptor:  encryptor,
 		domain:     domain,
 	}
 }
@@ -401,18 +404,37 @@ func (h *ServiceHandler) Deploy(w http.ResponseWriter, r *http.Request) {
 			if svc.RepoURL != nil {
 				repoURL = *svc.RepoURL
 			}
-			branch := "main"
+			branch := ""
 			if svc.Branch != nil && *svc.Branch != "" {
 				branch = *svc.Branch
 			}
 
+			// Load and decrypt environment variables
+			envVarsMap := make(map[string]string)
+			if envs, err := h.queries.ListEnvVarsByService(ctx, svc.ID); err == nil {
+				for _, ev := range envs {
+					val := ev.ValueEncrypted
+					if h.encryptor != nil {
+						if decrypted, decErr := h.encryptor.Decrypt(ev.ValueEncrypted); decErr == nil {
+							val = decrypted
+						}
+					}
+					envVarsMap[ev.Key] = val
+				}
+			}
+
 			buildRes, err := h.engine.Build(ctx, builder.BuildOptions{
-				DeploymentID: dep.ID,
-				ServiceID:    svc.ID,
-				ServiceSlug:  svc.Slug,
-				RepoURL:      repoURL,
-				Branch:       branch,
-				BuildMethod:  svc.BuildMethod,
+				DeploymentID:   dep.ID,
+				ServiceID:      svc.ID,
+				ServiceSlug:    svc.Slug,
+				RepoURL:        repoURL,
+				Branch:         branch,
+				BuildMethod:    svc.BuildMethod,
+				RootDir:        svc.RootDirectory,
+				DockerfilePath: deref(svc.DockerfilePath),
+				BuildCommand:   deref(svc.BuildCommand),
+				StartCommand:   deref(svc.StartCommand),
+				EnvVars:        envVarsMap,
 			})
 			if err != nil {
 				log.Error().Err(err).Str("deployment", dep.ID).Msg("Build failed")
@@ -424,9 +446,17 @@ func (h *ServiceHandler) Deploy(w http.ResponseWriter, r *http.Request) {
 				ServiceID:    svc.ID,
 				DeploymentID: dep.ID,
 				ImageTag:     buildRes.ImageTag,
+				EnvVars:      envVarsMap,
 			})
 		}()
 	}
 
 	writeJSON(w, http.StatusAccepted, dep)
+}
+
+func deref(s *string) string {
+	if s == nil {
+		return ""
+	}
+	return *s
 }

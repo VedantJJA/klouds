@@ -3,8 +3,11 @@
 package blueprint
 
 import (
+	"crypto/rand"
+	"encoding/hex"
 	"fmt"
 	"strings"
+	"time"
 
 	"gopkg.in/yaml.v3"
 )
@@ -124,13 +127,47 @@ func ParseBlueprint(data []byte) (*Blueprint, error) {
 			svc.RootDir = rootDir
 		} else if baseDir, ok := rawSvc["baseDir"].(string); ok {
 			svc.RootDir = baseDir
+		} else if dir, ok := rawSvc["directory"].(string); ok {
+			svc.RootDir = dir
+		} else if dir, ok := rawSvc["dir"].(string); ok {
+			svc.RootDir = dir
 		}
 
 		if svc.RootDir == "" {
 			svc.RootDir = "."
 		}
 
-		// Build and start commands
+		// Nested build block support
+		if buildObj, ok := rawSvc["build"].(map[string]interface{}); ok {
+			if bc, ok := buildObj["command"].(string); ok {
+				svc.BuildCommand = bc
+			}
+			if eng, ok := buildObj["engine"].(string); ok {
+				svc.Env = eng
+			}
+			if df, ok := buildObj["dockerfilePath"].(string); ok {
+				svc.DockerfilePath = df
+			}
+		}
+
+		// Nested deploy block support
+		if deployObj, ok := rawSvc["deploy"].(map[string]interface{}); ok {
+			if sc, ok := deployObj["command"].(string); ok {
+				svc.StartCommand = sc
+			}
+			if p, ok := deployObj["port"].(int); ok {
+				svc.Port = int32(p)
+			} else if pFloat, ok := deployObj["port"].(float64); ok {
+				svc.Port = int32(pFloat)
+			} else if pStr, ok := deployObj["port"].(string); ok {
+				var pInt int
+				if _, err := fmt.Sscanf(pStr, "%d", &pInt); err == nil {
+					svc.Port = int32(pInt)
+				}
+			}
+		}
+
+		// Top-level build and start commands
 		if bc, ok := rawSvc["buildCommand"].(string); ok {
 			svc.BuildCommand = bc
 		}
@@ -141,13 +178,16 @@ func ParseBlueprint(data []byte) (*Blueprint, error) {
 			svc.DockerfilePath = df
 		}
 
-		// Port
+		// Top-level port
 		if p, ok := rawSvc["port"].(int); ok {
 			svc.Port = int32(p)
 		} else if pFloat, ok := rawSvc["port"].(float64); ok {
 			svc.Port = int32(pFloat)
-		} else if svc.Port == 0 && svc.Type == "web" {
-			svc.Port = 3000
+		} else if pStr, ok := rawSvc["port"].(string); ok {
+			var pInt int
+			if _, err := fmt.Sscanf(pStr, "%d", &pInt); err == nil {
+				svc.Port = int32(pInt)
+			}
 		}
 
 		// Health Check
@@ -170,9 +210,41 @@ func ParseBlueprint(data []byte) (*Blueprint, error) {
 			svc.BuildMethod = "nixpacks"
 		}
 
-		// Env Vars
-		if envVars, ok := rawSvc["envVars"].([]interface{}); ok {
-			for _, item := range envVars {
+		// Env Vars: support both list of {key, value} and map {KEY: VAL} in envVars and env
+		parseEnvMap := func(envMap map[string]interface{}) {
+			for k, rawVal := range envMap {
+				ev := EnvVarDefinition{Key: k}
+				switch v := rawVal.(type) {
+				case string:
+					ev.Value = v
+				case int:
+					ev.Value = fmt.Sprintf("%d", v)
+				case float64:
+					ev.Value = fmt.Sprintf("%v", v)
+				case bool:
+					ev.Value = fmt.Sprintf("%v", v)
+				case map[string]interface{}:
+					if gen, ok := v["generate_value"].(bool); ok && gen {
+						ev.Value = generateRandomSecret(32)
+					} else if fromDb, ok := v["fromDatabase"].(map[string]interface{}); ok {
+						ref := &DatabaseRefDefinition{}
+						if dbName, ok := fromDb["name"].(string); ok {
+							ref.Name = dbName
+						}
+						if prop, ok := fromDb["property"].(string); ok {
+							ref.Property = prop
+						}
+						ev.FromDatabase = ref
+					}
+				}
+				if ev.Key != "" {
+					svc.EnvVars = append(svc.EnvVars, ev)
+				}
+			}
+		}
+
+		if envVarsList, ok := rawSvc["envVars"].([]interface{}); ok {
+			for _, item := range envVarsList {
 				if evMap, ok := item.(map[string]interface{}); ok {
 					ev := EnvVarDefinition{}
 					if k, ok := evMap["key"].(string); ok {
@@ -195,6 +267,49 @@ func ParseBlueprint(data []byte) (*Blueprint, error) {
 						svc.EnvVars = append(svc.EnvVars, ev)
 					}
 				}
+			}
+		} else if envVarsMap, ok := rawSvc["envVars"].(map[string]interface{}); ok {
+			parseEnvMap(envVarsMap)
+		}
+
+		if envList, ok := rawSvc["env"].([]interface{}); ok {
+			for _, item := range envList {
+				if evMap, ok := item.(map[string]interface{}); ok {
+					ev := EnvVarDefinition{}
+					if k, ok := evMap["key"].(string); ok {
+						ev.Key = k
+					}
+					if v, ok := evMap["value"].(string); ok {
+						ev.Value = v
+					}
+					if ev.Key != "" {
+						svc.EnvVars = append(svc.EnvVars, ev)
+					}
+				}
+			}
+		} else if envMap, ok := rawSvc["env"].(map[string]interface{}); ok {
+			parseEnvMap(envMap)
+		}
+
+		// If Port not set, check if PORT is present in EnvVars
+		if svc.Port == 0 {
+			for _, ev := range svc.EnvVars {
+				if strings.ToUpper(ev.Key) == "PORT" && ev.Value != "" {
+					var p int
+					if _, err := fmt.Sscanf(ev.Value, "%d", &p); err == nil && p > 0 {
+						svc.Port = int32(p)
+						break
+					}
+				}
+			}
+		}
+
+		// Fallback default ports: 3000 for web/static
+		if svc.Port == 0 {
+			if svc.Type == "static" {
+				svc.Port = 3000
+			} else {
+				svc.Port = 3000
 			}
 		}
 
@@ -292,4 +407,16 @@ func (b *Blueprint) Validate() error {
 	}
 
 	return nil
+}
+
+func generateRandomSecret(length int) string {
+	b := make([]byte, length/2+1)
+	if _, err := rand.Read(b); err != nil {
+		return fmt.Sprintf("sec_%d", time.Now().UnixNano())
+	}
+	res := hex.EncodeToString(b)
+	if len(res) > length {
+		return res[:length]
+	}
+	return res
 }

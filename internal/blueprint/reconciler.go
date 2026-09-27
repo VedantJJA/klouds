@@ -23,6 +23,7 @@ type Reconciler struct {
 	containers *container.Manager
 	engine     *builder.Engine
 	deployer   *builder.Deployer
+	domain     string
 }
 
 // NewReconciler creates a new blueprint reconciler.
@@ -32,6 +33,7 @@ func NewReconciler(
 	containers *container.Manager,
 	engine *builder.Engine,
 	deployer *builder.Deployer,
+	domain string,
 ) *Reconciler {
 	return &Reconciler{
 		pool:       pool,
@@ -40,6 +42,7 @@ func NewReconciler(
 		containers: containers,
 		engine:     engine,
 		deployer:   deployer,
+		domain:     domain,
 	}
 }
 
@@ -123,6 +126,29 @@ func (r *Reconciler) Reconcile(
 	}
 
 	// 2. Reconcile Services
+	domain := r.domain
+	if domain == "" {
+		domain = "klouds.online"
+	}
+	serviceUrlLookup := make(map[string]string)
+	for _, s := range bp.Services {
+		sSlug := slugify(s.Name)
+		url := fmt.Sprintf("https://%s.%s", sSlug, domain)
+		serviceUrlLookup[s.Name] = url
+		serviceUrlLookup[sSlug] = url
+		serviceUrlLookup["services."+s.Name+".url"] = url
+		serviceUrlLookup["services."+sSlug+".url"] = url
+	}
+
+	resolveServiceReferences := func(input string) string {
+		res := input
+		for k, v := range serviceUrlLookup {
+			res = strings.ReplaceAll(res, fmt.Sprintf("${%s}", k), v)
+			res = strings.ReplaceAll(res, fmt.Sprintf("${services.%s.url}", k), v)
+		}
+		return res
+	}
+
 	existingSvcs, _ := r.queries.ListServicesByProject(ctx, projectID)
 	svcLookup := make(map[string]db.Service)
 	for _, es := range existingSvcs {
@@ -156,7 +182,26 @@ func (r *Reconciler) Reconcile(
 		var isNew bool
 
 		if existing, ok := svcLookup[slug]; ok {
-			targetSvc = existing
+			updatedSvc, err := r.queries.UpdateServiceSpec(ctx, db.UpdateServiceSpecParams{
+				ID:              existing.ID,
+				Name:            svcDef.Name,
+				Type:            svcDef.Type,
+				BuildMethod:     svcDef.BuildMethod,
+				RepoURL:         &repoURL,
+				Branch:          &branch,
+				RootDirectory:   rootDir,
+				DockerfilePath:  &dockerfilePath,
+				BuildCommand:    &svcDef.BuildCommand,
+				StartCommand:    &svcDef.StartCommand,
+				Port:            svcDef.Port,
+				HealthCheckPath: &healthCheckPath,
+				AutoDeploy:      autoDeploy,
+			})
+			if err != nil {
+				targetSvc = existing
+			} else {
+				targetSvc = updatedSvc
+			}
 			result.ServicesUpdated = append(result.ServicesUpdated, svcDef.Name)
 		} else {
 			// Create new service
@@ -220,6 +265,9 @@ func (r *Reconciler) Reconcile(
 				}
 			}
 
+			// Resolve cross-service URLs (e.g. ${services.vtopcc-backend.url})
+			val = resolveServiceReferences(val)
+
 			if ev.Key != "" {
 				resolvedEnv[ev.Key] = val
 				encVal, err := r.encryptor.Encrypt(val)
@@ -241,11 +289,12 @@ func (r *Reconciler) Reconcile(
 			if stat == 0 {
 				stat = 301
 			}
+			resolvedTarget := resolveServiceReferences(rule.Target)
 			_, _ = r.queries.CreateRouteRule(ctx, db.CreateRouteRuleParams{
 				ServiceID: targetSvc.ID,
 				Type:      rule.Type,
 				Source:    rule.Source,
-				Target:    rule.Target,
+				Target:    resolvedTarget,
 				Status:    &stat,
 			})
 		}
@@ -280,7 +329,9 @@ func (r *Reconciler) Reconcile(
 						CommitSHA:      "",
 						BuildMethod:    s.BuildMethod,
 						RootDir:        s.RootDirectory,
-						DockerfilePath: *s.DockerfilePath,
+						DockerfilePath: deref(s.DockerfilePath),
+						BuildCommand:   deref(s.BuildCommand),
+						StartCommand:   deref(s.StartCommand),
 						EnvVars:        envs,
 					})
 					if bErr != nil {
@@ -334,4 +385,11 @@ func min(a, b int) int {
 		return a
 	}
 	return b
+}
+
+func deref(s *string) string {
+	if s == nil {
+		return ""
+	}
+	return *s
 }

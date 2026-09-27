@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { onMount } from 'svelte';
+  import { onMount, onDestroy } from 'svelte';
   import { page } from '$app/stores';
   import { goto } from '$app/navigation';
   import { api, type Service, type Deployment, type Project } from '$lib/api/client';
@@ -30,10 +30,11 @@
   let loading = $state(true);
   let actionLoading = $state(false);
   let error = $state('');
+  let pollTimer: any = null;
 
-  async function loadServiceData() {
+  async function loadServiceData(silent = false) {
     if (!serviceId) return;
-    loading = true;
+    if (!silent) loading = true;
     error = '';
     try {
       const svc = await api.getService(serviceId);
@@ -50,12 +51,42 @@
       const deps = await api.getDeployments(serviceId);
       deployments = deps || [];
       if (deployments.length > 0) {
-        selectedDeployment = deployments[0];
+        if (!selectedDeployment) {
+          selectedDeployment = deployments[0];
+        } else {
+          const updated = deployments.find(d => d.id === selectedDeployment.id);
+          selectedDeployment = updated || deployments[0];
+        }
+      }
+
+      // Check if build is ongoing to maintain polling
+      const isBuilding = deployments.some(d => d.status === 'building' || d.status === 'deploying' || d.status === 'queued');
+      if (isBuilding && !pollTimer) {
+        pollTimer = setInterval(() => {
+          loadServiceData(true);
+        }, 2000);
+      } else if (!isBuilding && pollTimer) {
+        clearInterval(pollTimer);
+        pollTimer = null;
       }
     } catch (err: any) {
-      error = err.message || 'Failed to load service details';
+      if (!silent) error = err.message || 'Failed to load service details';
     } finally {
-      loading = false;
+      if (!silent) loading = false;
+    }
+  }
+
+  async function handleDeploy() {
+    if (!serviceId) return;
+    actionLoading = true;
+    try {
+      await api.deployService(serviceId);
+      activeTab = 'logs';
+      await loadServiceData();
+    } catch (err: any) {
+      alert(err.message || 'Failed to trigger deployment');
+    } finally {
+      actionLoading = false;
     }
   }
 
@@ -106,6 +137,13 @@
   onMount(() => {
     loadServiceData();
   });
+
+  onDestroy(() => {
+    if (pollTimer) {
+      clearInterval(pollTimer);
+      pollTimer = null;
+    }
+  });
 </script>
 
 <Breadcrumbs
@@ -139,6 +177,16 @@
     </div>
 
     <div class="flex items-center gap-2">
+      <button
+        class="btn btn-primary btn-sm"
+        onclick={handleDeploy}
+        disabled={actionLoading}
+        title="Deploy latest code"
+      >
+        <Play size={14} />
+        <span>Deploy</span>
+      </button>
+
       <button
         class="btn btn-secondary btn-sm"
         onclick={handleRestart}
@@ -357,14 +405,17 @@
       </div>
 
       <div class="log-viewer">
-        {#if selectedDeployment && selectedDeployment.build_logs}
-          {#each selectedDeployment.build_logs.split('\n') as line}
+        {#if selectedDeployment && (selectedDeployment.build_log || selectedDeployment.build_logs)}
+          {#each (selectedDeployment.build_log || selectedDeployment.build_logs || '').split('\n') as line}
             <div class="log-line-stdout">{line}</div>
           {/each}
+        {:else if selectedDeployment && (selectedDeployment.status === 'building' || selectedDeployment.status === 'deploying')}
+          <div class="log-line-build">[klouds-builder] Build in progress... Streaming logs will appear as build executes.</div>
         {:else}
-          <div class="log-line-system">No build logs available for this service.</div>
-          <div class="log-line-stdout">Container stdout stream attached.</div>
-          <div class="log-line-build">[klouds-engine] Service initialized on port {service.port}.</div>
+          <div class="log-line-system">No build logs available for this deployment.</div>
+          {#if selectedDeployment}
+            <div class="log-line-stdout">Deployment status: {selectedDeployment.status}</div>
+          {/if}
         {/if}
       </div>
     </div>

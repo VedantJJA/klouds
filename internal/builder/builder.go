@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 
@@ -43,6 +44,8 @@ type BuildOptions struct {
 	BuildMethod    string // "nixpacks" or "dockerfile"
 	RootDir        string // Subdirectory in repository for monorepo support
 	DockerfilePath string
+	BuildCommand   string
+	StartCommand   string
 	EnvVars        map[string]string
 }
 
@@ -87,23 +90,39 @@ func (e *Engine) Build(ctx context.Context, opts BuildOptions) (*BuildResult, er
 	// Step 1: Clone Repository
 	if opts.RepoURL != "" {
 		appendLog(fmt.Sprintf("[klouds-builder] Cloning %s (branch: %s)...", opts.RepoURL, opts.Branch))
-		branch := opts.Branch
-		if branch == "" {
-			branch = "main"
+		branch := strings.TrimSpace(opts.Branch)
+		var cloneErr error
+
+		if branch != "" {
+			cloneCmd := exec.CommandContext(ctx, "git", "clone", "--depth", "1", "-b", branch, opts.RepoURL, workDir)
+			cloneCmd.Stdout = logWriter
+			cloneCmd.Stderr = logWriter
+			cloneErr = cloneCmd.Run()
+		} else {
+			cloneCmd := exec.CommandContext(ctx, "git", "clone", "--depth", "1", opts.RepoURL, workDir)
+			cloneCmd.Stdout = logWriter
+			cloneCmd.Stderr = logWriter
+			cloneErr = cloneCmd.Run()
 		}
 
-		cloneCmd := exec.CommandContext(ctx, "git", "clone", "--depth", "1", "-b", branch, opts.RepoURL, workDir)
-		cloneCmd.Stdout = logWriter
-		cloneCmd.Stderr = logWriter
-		if err := cloneCmd.Run(); err != nil {
-			appendLog(fmt.Sprintf("[klouds-builder] Git clone failed: %v", err))
-			return &BuildResult{
-				ImageTag: imageTag,
-				Duration: time.Since(startTime),
-				Logs:     logBuf.String(),
-				Success:  false,
-				Error:    err,
-			}, err
+		if cloneErr != nil {
+			appendLog(fmt.Sprintf("[klouds-builder] Warning: Clone with branch %q failed: %v. Attempting clone of default branch...", branch, cloneErr))
+			_ = os.RemoveAll(workDir)
+			_ = os.MkdirAll(workDir, 0755)
+
+			fallbackCmd := exec.CommandContext(ctx, "git", "clone", "--depth", "1", opts.RepoURL, workDir)
+			fallbackCmd.Stdout = logWriter
+			fallbackCmd.Stderr = logWriter
+			if fbErr := fallbackCmd.Run(); fbErr != nil {
+				appendLog(fmt.Sprintf("[klouds-builder] Git clone failed: %v", fbErr))
+				return &BuildResult{
+					ImageTag: imageTag,
+					Duration: time.Since(startTime),
+					Logs:     logBuf.String(),
+					Success:  false,
+					Error:    fbErr,
+				}, fbErr
+			}
 		}
 		appendLog("[klouds-builder] Git clone successful.")
 	}
@@ -146,11 +165,18 @@ func (e *Engine) Build(ctx context.Context, opts BuildOptions) (*BuildResult, er
 	} else {
 		// Use Nixpacks
 		appendLog("[klouds-builder] Building via Nixpacks engine...")
+		nixArgs := []string{"build", buildDir, "--name", imageTag}
+		if opts.BuildCommand != "" {
+			nixArgs = append(nixArgs, "--build-cmd", opts.BuildCommand)
+		}
+		if opts.StartCommand != "" {
+			nixArgs = append(nixArgs, "--start-cmd", opts.StartCommand)
+		}
+		for k, v := range opts.EnvVars {
+			nixArgs = append(nixArgs, "--env", fmt.Sprintf("%s=%s", k, v))
+		}
+
 		if isCommandAvailable("nixpacks") {
-			nixArgs := []string{"build", buildDir, "--name", imageTag}
-			for k, v := range opts.EnvVars {
-				nixArgs = append(nixArgs, "--env", fmt.Sprintf("%s=%s", k, v))
-			}
 			nixCmd := exec.CommandContext(ctx, "nixpacks", nixArgs...)
 			nixCmd.Stdout = logWriter
 			nixCmd.Stderr = logWriter
@@ -164,6 +190,15 @@ func (e *Engine) Build(ctx context.Context, opts BuildOptions) (*BuildResult, er
 				"-v", fmt.Sprintf("%s:/app:ro", buildDir),
 				"ghcr.io/railwayapp/nixpacks:latest",
 				"build", "/app", "--name", imageTag,
+			}
+			if opts.BuildCommand != "" {
+				dockerArgs = append(dockerArgs, "--build-cmd", opts.BuildCommand)
+			}
+			if opts.StartCommand != "" {
+				dockerArgs = append(dockerArgs, "--start-cmd", opts.StartCommand)
+			}
+			for k, v := range opts.EnvVars {
+				dockerArgs = append(dockerArgs, "--env", fmt.Sprintf("%s=%s", k, v))
 			}
 			nixDockerCmd := exec.CommandContext(ctx, "docker", dockerArgs...)
 			nixDockerCmd.Stdout = logWriter
