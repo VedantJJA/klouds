@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"strconv"
+	"strings"
 	"time"
 )
 
@@ -37,6 +38,8 @@ type Config struct {
 
 // Load reads configuration from environment variables with sensible defaults.
 func Load() (*Config, error) {
+	loadDotEnv()
+
 	cfg := &Config{
 		Host:          getEnv("KLOUDS_HOST", "0.0.0.0"),
 		Port:          getEnvInt("KLOUDS_PORT", 8080),
@@ -49,7 +52,7 @@ func Load() (*Config, error) {
 		DockerNetwork: getEnv("KLOUDS_DOCKER_NETWORK", "klouds-internal"),
 		CaddyAdminAPI: getEnv("KLOUDS_CADDY_ADMIN", "http://localhost:2019"),
 		BuildTimeout:  getEnvDuration("KLOUDS_BUILD_TIMEOUT", 10*time.Minute),
-		DataDir:       getEnv("KLOUDS_DATA_DIR", "/var/lib/klouds"),
+		DataDir:       getEnv("KLOUDS_DATA_DIR", "./data"),
 	}
 
 	if cfg.SecretKey == "" {
@@ -115,4 +118,28 @@ func getEnvDuration(key string, fallback time.Duration) time.Duration {
 		return fallback
 	}
 	return d
+}
+
+// loadDotEnv reads .env from the current directory if it exists.
+func loadDotEnv() {
+	data, err := os.ReadFile(".env")
+	if err != nil {
+		return
+	}
+	lines := strings.Split(string(data), "\n")
+	for _, line := range lines {
+		line = strings.TrimSpace(line)
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		parts := strings.SplitN(line, "=", 2)
+		if len(parts) == 2 {
+			key := strings.TrimSpace(parts[0])
+			val := strings.TrimSpace(parts[1])
+			val = strings.Trim(val, "\"'")
+			if os.Getenv(key) == "" {
+				_ = os.Setenv(key, val)
+			}
+		}
+	}
 }
