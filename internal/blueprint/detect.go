@@ -23,9 +23,21 @@ func DetectFromRepo(ctx context.Context, repoURL, branch, dataDir string) (*Dete
 		branch = "main"
 	}
 
-	tempDir, err := os.MkdirTemp(dataDir, "klouds-detect-*")
+	targetBase := dataDir
+	if targetBase != "" {
+		if err := os.MkdirAll(targetBase, 0755); err != nil {
+			targetBase = os.TempDir()
+		}
+	} else {
+		targetBase = os.TempDir()
+	}
+
+	tempDir, err := os.MkdirTemp(targetBase, "klouds-detect-*")
 	if err != nil {
-		return nil, fmt.Errorf("create temp detection dir: %w", err)
+		tempDir, err = os.MkdirTemp("", "klouds-detect-*")
+		if err != nil {
+			return nil, fmt.Errorf("create temp detection dir: %w", err)
+		}
 	}
 	defer os.RemoveAll(tempDir)
 
@@ -48,6 +60,7 @@ func DetectFromDirectory(rootPath string) (*DetectionResult, error) {
 	blueprintCandidates := []string{
 		"klouds.yaml", "klouds.yml",
 		"render.yaml", "render.yml",
+		"devpanel.yaml", "devpanel.yml",
 		"paas.yaml", "paas.yml",
 	}
 

@@ -126,3 +126,23 @@ services:
 		t.Errorf("unexpected service 2 (pserv -> private mapping): %+v", s2)
 	}
 }
+
+func TestDetectFromRepoLive(t *testing.T) {
+	ctx := t.Context()
+	res, err := DetectFromRepo(ctx, "https://github.com/VedantJJA/DevPtestDynrepo", "main", "./data")
+	if err != nil {
+		t.Fatalf("unexpected error scanning repo: %v", err)
+	}
+
+	if res.Source != "blueprint" {
+		t.Errorf("expected source 'blueprint', got '%s'", res.Source)
+	}
+
+	if len(res.Blueprint.Services) != 2 {
+		t.Errorf("expected 2 services, got %d", len(res.Blueprint.Services))
+	}
+
+	if len(res.Blueprint.Databases) != 1 {
+		t.Errorf("expected 1 database, got %d", len(res.Blueprint.Databases))
+	}
+}

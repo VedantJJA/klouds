@@ -36,6 +36,11 @@ func main() {
 		log.Fatal().Err(err).Msg("Failed to load configuration")
 	}
 
+	// Ensure data directory exists
+	if err := os.MkdirAll(cfg.DataDir, 0755); err != nil {
+		log.Warn().Err(err).Str("dir", cfg.DataDir).Msg("Failed to create data directory")
+	}
+
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
