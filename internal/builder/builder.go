@@ -172,7 +172,20 @@ func (e *Engine) Build(ctx context.Context, opts BuildOptions) (*BuildResult, er
 		if opts.StartCommand != "" {
 			nixArgs = append(nixArgs, "--start-cmd", opts.StartCommand)
 		}
+
+		effectiveEnvVars := make(map[string]string)
 		for k, v := range opts.EnvVars {
+			effectiveEnvVars[k] = v
+		}
+		if fileExists(filepath.Join(buildDir, "package.json")) {
+			if _, ok := effectiveEnvVars["NIXPACKS_NODE_VERSION"]; !ok {
+				if _, ok2 := effectiveEnvVars["NODE_VERSION"]; !ok2 {
+					effectiveEnvVars["NIXPACKS_NODE_VERSION"] = "22"
+				}
+			}
+		}
+
+		for k, v := range effectiveEnvVars {
 			nixArgs = append(nixArgs, "--env", fmt.Sprintf("%s=%s", k, v))
 		}
 
@@ -197,7 +210,7 @@ func (e *Engine) Build(ctx context.Context, opts BuildOptions) (*BuildResult, er
 			if opts.StartCommand != "" {
 				dockerArgs = append(dockerArgs, "--start-cmd", opts.StartCommand)
 			}
-			for k, v := range opts.EnvVars {
+			for k, v := range effectiveEnvVars {
 				dockerArgs = append(dockerArgs, "--env", fmt.Sprintf("%s=%s", k, v))
 			}
 			nixDockerCmd := exec.CommandContext(ctx, "docker", dockerArgs...)
