@@ -233,6 +233,10 @@
               <span class="spec-label">Branch</span>
               <span class="spec-val font-mono">{service.git_branch || 'main'}</span>
             </div>
+            <div class="spec-row">
+              <span class="spec-label">Root Directory</span>
+              <span class="spec-val font-mono">{service.root_dir || '.'}</span>
+            </div>
           {/if}
 
           {#if service.docker_image}

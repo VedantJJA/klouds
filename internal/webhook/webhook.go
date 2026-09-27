@@ -2,6 +2,7 @@
 package webhook
 
 import (
+	"context"
 	"crypto/hmac"
 	"crypto/sha256"
 	"encoding/hex"
@@ -48,9 +49,18 @@ type GitHubPushEvent struct {
 			Email string `json:"email"`
 		} `json:"author"`
 	} `json:"head_commit"`
+	Commits []struct {
+		ID       string   `json:"id"`
+		Message  string   `json:"message"`
+		Added    []string `json:"added"`
+		Removed  []string `json:"removed"`
+		Modified []string `json:"modified"`
+	} `json:"commits"`
 	Repository struct {
 		Name     string `json:"name"`
 		CloneURL string `json:"clone_url"`
+		HTMLURL  string `json:"html_url"`
+		SSHURL   string `json:"ssh_url"`
 	} `json:"repository"`
 	Pusher struct {
 		Name  string `json:"name"`
@@ -58,7 +68,7 @@ type GitHubPushEvent struct {
 	} `json:"pusher"`
 }
 
-// HandleGitHub handles POST /api/webhooks/github/{serviceID}
+// HandleGitHub handles POST /api/webhooks/github/{serviceID} (per-service webhook)
 func (h *Handler) HandleGitHub(w http.ResponseWriter, r *http.Request) {
 	serviceID := chi.URLParam(r, "serviceID")
 	if serviceID == "" {
@@ -116,7 +126,7 @@ func (h *Handler) HandleGitHub(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Extract branch name from ref (e.g., "refs/heads/main" -> "main")
+	// Extract branch name from ref
 	branch := strings.TrimPrefix(payload.Ref, "refs/heads/")
 	expectedBranch := "main"
 	if svc.Branch != nil && *svc.Branch != "" {
@@ -130,54 +140,170 @@ func (h *Handler) HandleGitHub(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Create deployment record
-	commitSHA := payload.HeadCommit.ID
-	commitMsg := payload.HeadCommit.Message
-	trigger := "webhook"
-	imageTag := fmt.Sprintf("klouds/%s:%s", svc.Slug, commitSHA[:min(8, len(commitSHA))])
+	depID, err := h.triggerServiceDeployment(r.Context(), svc, branch, payload.HeadCommit.ID, payload.HeadCommit.Message)
+	if err != nil {
+		http.Error(w, `{"error":"failed to create deployment"}`, http.StatusInternalServerError)
+		return
+	}
 
-	dep, err := h.queries.CreateDeployment(r.Context(), db.CreateDeploymentParams{
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write([]byte(fmt.Sprintf(`{"status":"queued","deployment_id":"%s"}`, depID)))
+}
+
+// HandleGitHubRepo handles POST /api/webhooks/github/repo (repository-wide webhook for multi-service repos)
+func (h *Handler) HandleGitHubRepo(w http.ResponseWriter, r *http.Request) {
+	body, err := io.ReadAll(r.Body)
+	if err != nil {
+		http.Error(w, `{"error":"failed to read payload"}`, http.StatusBadRequest)
+		return
+	}
+	defer r.Body.Close()
+
+	event := r.Header.Get("X-GitHub-Event")
+	if event == "ping" {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"status":"pong"}`))
+		return
+	}
+	if event != "push" {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"status":"ignored","reason":"not a push event"}`))
+		return
+	}
+
+	var payload GitHubPushEvent
+	if err := json.Unmarshal(body, &payload); err != nil {
+		http.Error(w, `{"error":"invalid json payload"}`, http.StatusBadRequest)
+		return
+	}
+
+	branch := strings.TrimPrefix(payload.Ref, "refs/heads/")
+	cloneURL := payload.Repository.CloneURL
+	htmlURL := payload.Repository.HTMLURL
+
+	// Collect all modified files across commits for selective path filtering
+	changedFiles := make(map[string]bool)
+	for _, c := range payload.Commits {
+		for _, f := range c.Added {
+			changedFiles[f] = true
+		}
+		for _, f := range c.Modified {
+			changedFiles[f] = true
+		}
+		for _, f := range c.Removed {
+			changedFiles[f] = true
+		}
+	}
+
+	// Find all services pointing to this repository
+	services, err := h.queries.ListAllServices(r.Context())
+	if err != nil {
+		http.Error(w, `{"error":"failed to query services"}`, http.StatusInternalServerError)
+		return
+	}
+
+	triggered := make([]string, 0)
+	for _, svc := range services {
+		if !svc.AutoDeploy || svc.RepoURL == nil {
+			continue
+		}
+
+		// Normalize and match repo URLs
+		repoMatch := matchesRepoURL(*svc.RepoURL, cloneURL, htmlURL)
+		if !repoMatch {
+			continue
+		}
+
+		expectedBranch := "main"
+		if svc.Branch != nil && *svc.Branch != "" {
+			expectedBranch = *svc.Branch
+		}
+		if branch != expectedBranch {
+			continue
+		}
+
+		// Path filtering for monorepos
+		if !isPathAffected(svc.RootDirectory, changedFiles) {
+			log.Info().
+				Str("service", svc.Name).
+				Str("root_dir", svc.RootDirectory).
+				Msg("Skipping deployment: no changed files in service root directory")
+			continue
+		}
+
+		depID, err := h.triggerServiceDeployment(r.Context(), svc, branch, payload.HeadCommit.ID, payload.HeadCommit.Message)
+		if err == nil {
+			triggered = append(triggered, fmt.Sprintf("%s:%s", svc.Name, depID))
+		}
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	res, _ := json.Marshal(map[string]interface{}{
+		"status":    "processed",
+		"triggered": triggered,
+	})
+	_, _ = w.Write(res)
+}
+
+func (h *Handler) triggerServiceDeployment(ctx context.Context, svc db.Service, branch, commitSHA, commitMsg string) (string, error) {
+	if commitSHA == "" {
+		commitSHA = "HEAD"
+	}
+	if commitMsg == "" {
+		commitMsg = "Git push update"
+	}
+
+	imageTag := fmt.Sprintf("klouds/%s:%s", svc.Slug, commitSHA[:min(8, len(commitSHA))])
+	dep, err := h.queries.CreateDeployment(ctx, db.CreateDeploymentParams{
 		ServiceID: svc.ID,
 		UserID:    svc.UserID,
 		Status:    "building",
 		CommitSHA: &commitSHA,
 		CommitMsg: &commitMsg,
 		ImageTag:  imageTag,
-		Trigger:   trigger,
+		Trigger:   "webhook",
 	})
 	if err != nil {
 		log.Error().Err(err).Msg("Failed to create deployment record")
-		http.Error(w, `{"error":"failed to create deployment"}`, http.StatusInternalServerError)
-		return
+		return "", err
 	}
 
-	// Launch build and deployment asynchronously in background
 	go func() {
-		ctx := r.Context()
+		bgCtx := context.Background()
 		repoURL := ""
 		if svc.RepoURL != nil {
 			repoURL = *svc.RepoURL
 		}
 
-		buildRes, err := h.engine.Build(ctx, builder.BuildOptions{
-			DeploymentID: dep.ID,
-			ServiceID:    svc.ID,
-			ServiceSlug:  svc.Slug,
-			RepoURL:      repoURL,
-			Branch:       branch,
-			CommitSHA:    commitSHA,
-			BuildMethod:  svc.BuildMethod,
-			EnvVars:      nil,
+		df := "Dockerfile"
+		if svc.DockerfilePath != nil && *svc.DockerfilePath != "" {
+			df = *svc.DockerfilePath
+		}
+
+		buildRes, err := h.engine.Build(bgCtx, builder.BuildOptions{
+			DeploymentID:   dep.ID,
+			ServiceID:      svc.ID,
+			ServiceSlug:    svc.Slug,
+			RepoURL:        repoURL,
+			Branch:         branch,
+			CommitSHA:      commitSHA,
+			BuildMethod:    svc.BuildMethod,
+			RootDir:        svc.RootDirectory,
+			DockerfilePath: df,
+			EnvVars:        nil,
 		})
 
 		if err != nil {
 			log.Error().Err(err).Str("deployment", dep.ID).Msg("Build step failed")
-			_, _ = h.queries.UpdateDeploymentFinished(ctx, dep.ID, "failed", 0)
+			_, _ = h.queries.UpdateDeploymentFinished(bgCtx, dep.ID, "failed", 0)
 			return
 		}
 
-		// Perform zero-downtime blue-green deployment
-		deployErr := h.deployer.Deploy(ctx, builder.DeployRequest{
+		deployErr := h.deployer.Deploy(bgCtx, builder.DeployRequest{
 			ServiceID:    svc.ID,
 			DeploymentID: dep.ID,
 			ImageTag:     buildRes.ImageTag,
@@ -189,9 +315,40 @@ func (h *Handler) HandleGitHub(w http.ResponseWriter, r *http.Request) {
 		}
 	}()
 
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusOK)
-	_, _ = w.Write([]byte(fmt.Sprintf(`{"status":"queued","deployment_id":"%s"}`, dep.ID)))
+	return dep.ID, nil
+}
+
+func isPathAffected(rootDir string, changedFiles map[string]bool) bool {
+	// If root directory is root or empty, any change triggers build
+	rootDir = strings.TrimPrefix(rootDir, "./")
+	rootDir = strings.TrimSuffix(rootDir, "/")
+	if rootDir == "" || rootDir == "." || len(changedFiles) == 0 {
+		return true
+	}
+
+	prefix := rootDir + "/"
+	for file := range changedFiles {
+		clean := strings.TrimPrefix(file, "./")
+		if clean == rootDir || strings.HasPrefix(clean, prefix) {
+			return true
+		}
+	}
+	return false
+}
+
+func matchesRepoURL(configured, cloneURL, htmlURL string) bool {
+	norm := func(u string) string {
+		u = strings.ToLower(strings.TrimSpace(u))
+		u = strings.TrimSuffix(u, ".git")
+		u = strings.TrimPrefix(u, "https://")
+		u = strings.TrimPrefix(u, "http://")
+		u = strings.TrimPrefix(u, "git@")
+		u = strings.ReplaceAll(u, ":", "/")
+		return u
+	}
+
+	nc := norm(configured)
+	return nc == norm(cloneURL) || nc == norm(htmlURL)
 }
 
 func verifyGitHubSignature(payload []byte, secret string, signatureHeader string) bool {

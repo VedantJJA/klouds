@@ -43,6 +43,7 @@ type CreateServiceRequest struct {
 	BuildMethod     string  `json:"build_method"`
 	RepoURL         *string `json:"repo_url"`
 	Branch          *string `json:"branch"`
+	RootDir         string  `json:"root_dir"`
 	DockerfilePath  *string `json:"dockerfile_path"`
 	BuildCommand    *string `json:"build_command"`
 	StartCommand    *string `json:"start_command"`
@@ -118,6 +119,11 @@ func (h *ServiceHandler) Create(w http.ResponseWriter, r *http.Request) {
 		memLimit = 2 * 1024 * 1024 * 1024
 	}
 
+	rootDir := req.RootDir
+	if rootDir == "" {
+		rootDir = "."
+	}
+
 	svc, err := h.queries.CreateService(r.Context(), db.CreateServiceParams{
 		ProjectID:       req.ProjectID,
 		UserID:          userID,
@@ -127,6 +133,7 @@ func (h *ServiceHandler) Create(w http.ResponseWriter, r *http.Request) {
 		BuildMethod:     req.BuildMethod,
 		RepoURL:         req.RepoURL,
 		Branch:          req.Branch,
+		RootDirectory:   rootDir,
 		DockerfilePath:  req.DockerfilePath,
 		BuildCommand:    req.BuildCommand,
 		StartCommand:    req.StartCommand,

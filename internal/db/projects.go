@@ -115,6 +115,7 @@ type CreateServiceParams struct {
 	BuildMethod     string
 	RepoURL         *string
 	Branch          *string
+	RootDirectory   string
 	DockerfilePath  *string
 	BuildCommand    *string
 	StartCommand    *string
@@ -127,18 +128,22 @@ type CreateServiceParams struct {
 }
 
 func (q *Queries) CreateService(ctx context.Context, arg CreateServiceParams) (Service, error) {
+	rootDir := arg.RootDirectory
+	if rootDir == "" {
+		rootDir = "."
+	}
 	row := q.db.QueryRow(ctx,
 		`INSERT INTO services (
 			project_id, user_id, name, slug, type, build_method,
-			repo_url, branch, dockerfile_path, build_command, start_command,
+			repo_url, branch, root_directory, dockerfile_path, build_command, start_command,
 			port, health_check_path, auto_deploy, subdomain, cpu_limit, memory_limit
-		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)
+		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18)
 		RETURNING id, project_id, user_id, name, slug, type, status, build_method,
-			repo_url, branch, dockerfile_path, build_command, start_command,
+			repo_url, branch, root_directory, dockerfile_path, build_command, start_command,
 			port, health_check_path, auto_deploy, container_id, image_tag,
 			subdomain, cpu_limit, memory_limit, created_at, updated_at`,
 		arg.ProjectID, arg.UserID, arg.Name, arg.Slug, arg.Type, arg.BuildMethod,
-		arg.RepoURL, arg.Branch, arg.DockerfilePath, arg.BuildCommand, arg.StartCommand,
+		arg.RepoURL, arg.Branch, rootDir, arg.DockerfilePath, arg.BuildCommand, arg.StartCommand,
 		arg.Port, arg.HealthCheckPath, arg.AutoDeploy, arg.Subdomain, arg.CpuLimit, arg.MemoryLimit,
 	)
 	return scanService(row)
@@ -147,7 +152,7 @@ func (q *Queries) CreateService(ctx context.Context, arg CreateServiceParams) (S
 func (q *Queries) GetServiceByID(ctx context.Context, id string) (Service, error) {
 	row := q.db.QueryRow(ctx,
 		`SELECT id, project_id, user_id, name, slug, type, status, build_method,
-			repo_url, branch, dockerfile_path, build_command, start_command,
+			repo_url, branch, root_directory, dockerfile_path, build_command, start_command,
 			port, health_check_path, auto_deploy, container_id, image_tag,
 			subdomain, cpu_limit, memory_limit, created_at, updated_at
 		 FROM services WHERE id = $1`, id)
@@ -157,7 +162,7 @@ func (q *Queries) GetServiceByID(ctx context.Context, id string) (Service, error
 func (q *Queries) GetServiceBySlug(ctx context.Context, slug string) (Service, error) {
 	row := q.db.QueryRow(ctx,
 		`SELECT id, project_id, user_id, name, slug, type, status, build_method,
-			repo_url, branch, dockerfile_path, build_command, start_command,
+			repo_url, branch, root_directory, dockerfile_path, build_command, start_command,
 			port, health_check_path, auto_deploy, container_id, image_tag,
 			subdomain, cpu_limit, memory_limit, created_at, updated_at
 		 FROM services WHERE slug = $1`, slug)
@@ -167,7 +172,7 @@ func (q *Queries) GetServiceBySlug(ctx context.Context, slug string) (Service, e
 func (q *Queries) ListServicesByProject(ctx context.Context, projectID string) ([]Service, error) {
 	rows, err := q.db.Query(ctx,
 		`SELECT id, project_id, user_id, name, slug, type, status, build_method,
-			repo_url, branch, dockerfile_path, build_command, start_command,
+			repo_url, branch, root_directory, dockerfile_path, build_command, start_command,
 			port, health_check_path, auto_deploy, container_id, image_tag,
 			subdomain, cpu_limit, memory_limit, created_at, updated_at
 		 FROM services WHERE project_id = $1 ORDER BY created_at DESC`, projectID)
@@ -181,7 +186,7 @@ func (q *Queries) ListServicesByProject(ctx context.Context, projectID string) (
 func (q *Queries) ListServicesByUser(ctx context.Context, userID string) ([]Service, error) {
 	rows, err := q.db.Query(ctx,
 		`SELECT id, project_id, user_id, name, slug, type, status, build_method,
-			repo_url, branch, dockerfile_path, build_command, start_command,
+			repo_url, branch, root_directory, dockerfile_path, build_command, start_command,
 			port, health_check_path, auto_deploy, container_id, image_tag,
 			subdomain, cpu_limit, memory_limit, created_at, updated_at
 		 FROM services WHERE user_id = $1 ORDER BY created_at DESC`, userID)
@@ -192,10 +197,24 @@ func (q *Queries) ListServicesByUser(ctx context.Context, userID string) ([]Serv
 	return scanServices(rows)
 }
 
+func (q *Queries) ListServicesByRepoURL(ctx context.Context, repoURL string) ([]Service, error) {
+	rows, err := q.db.Query(ctx,
+		`SELECT id, project_id, user_id, name, slug, type, status, build_method,
+			repo_url, branch, root_directory, dockerfile_path, build_command, start_command,
+			port, health_check_path, auto_deploy, container_id, image_tag,
+			subdomain, cpu_limit, memory_limit, created_at, updated_at
+		 FROM services WHERE repo_url = $1 ORDER BY created_at DESC`, repoURL)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	return scanServices(rows)
+}
+
 func (q *Queries) ListAllServices(ctx context.Context) ([]Service, error) {
 	rows, err := q.db.Query(ctx,
 		`SELECT id, project_id, user_id, name, slug, type, status, build_method,
-			repo_url, branch, dockerfile_path, build_command, start_command,
+			repo_url, branch, root_directory, dockerfile_path, build_command, start_command,
 			port, health_check_path, auto_deploy, container_id, image_tag,
 			subdomain, cpu_limit, memory_limit, created_at, updated_at
 		 FROM services ORDER BY created_at DESC`)
@@ -211,7 +230,7 @@ func (q *Queries) UpdateServiceStatus(ctx context.Context, id string, status str
 		`UPDATE services SET status = $2, updated_at = NOW()
 		 WHERE id = $1
 		 RETURNING id, project_id, user_id, name, slug, type, status, build_method,
-			repo_url, branch, dockerfile_path, build_command, start_command,
+			repo_url, branch, root_directory, dockerfile_path, build_command, start_command,
 			port, health_check_path, auto_deploy, container_id, image_tag,
 			subdomain, cpu_limit, memory_limit, created_at, updated_at`,
 		id, status)
@@ -223,7 +242,7 @@ func (q *Queries) UpdateServiceContainer(ctx context.Context, id string, contain
 		`UPDATE services SET container_id = $2, image_tag = $3, status = $4, updated_at = NOW()
 		 WHERE id = $1
 		 RETURNING id, project_id, user_id, name, slug, type, status, build_method,
-			repo_url, branch, dockerfile_path, build_command, start_command,
+			repo_url, branch, root_directory, dockerfile_path, build_command, start_command,
 			port, health_check_path, auto_deploy, container_id, image_tag,
 			subdomain, cpu_limit, memory_limit, created_at, updated_at`,
 		id, containerID, imageTag, status)
@@ -248,7 +267,7 @@ func scanService(row interface{ Scan(dest ...interface{}) error }) (Service, err
 	var s Service
 	err := row.Scan(
 		&s.ID, &s.ProjectID, &s.UserID, &s.Name, &s.Slug, &s.Type, &s.Status, &s.BuildMethod,
-		&s.RepoURL, &s.Branch, &s.DockerfilePath, &s.BuildCommand, &s.StartCommand,
+		&s.RepoURL, &s.Branch, &s.RootDirectory, &s.DockerfilePath, &s.BuildCommand, &s.StartCommand,
 		&s.Port, &s.HealthCheckPath, &s.AutoDeploy, &s.ContainerID, &s.ImageTag,
 		&s.Subdomain, &s.CpuLimit, &s.MemoryLimit, &s.CreatedAt, &s.UpdatedAt,
 	)
@@ -273,3 +292,4 @@ func scanServices(rows interface {
 	}
 	return services, rows.Err()
 }
+

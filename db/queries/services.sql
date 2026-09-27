@@ -1,9 +1,9 @@
 -- name: CreateService :one
 INSERT INTO services (
     project_id, user_id, name, slug, type, build_method,
-    repo_url, branch, dockerfile_path, build_command, start_command,
+    repo_url, branch, root_directory, dockerfile_path, build_command, start_command,
     port, health_check_path, auto_deploy, subdomain, cpu_limit, memory_limit
-) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)
+) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18)
 RETURNING *;
 
 -- name: GetServiceByID :one
@@ -20,6 +20,9 @@ SELECT * FROM services WHERE project_id = $1 ORDER BY created_at DESC;
 
 -- name: ListServicesByUser :many
 SELECT * FROM services WHERE user_id = $1 ORDER BY created_at DESC;
+
+-- name: ListServicesByRepoURL :many
+SELECT * FROM services WHERE repo_url = $1 ORDER BY created_at DESC;
 
 -- name: ListAllServices :many
 SELECT * FROM services ORDER BY created_at DESC;

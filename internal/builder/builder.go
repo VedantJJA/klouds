@@ -34,14 +34,16 @@ func NewEngine(pool *pgxpool.Pool, dataDir string) *Engine {
 
 // BuildOptions contains inputs for a service build execution.
 type BuildOptions struct {
-	DeploymentID string
-	ServiceID    string
-	ServiceSlug  string
-	RepoURL      string
-	Branch       string
-	CommitSHA    string
-	BuildMethod  string // "nixpacks" or "dockerfile"
-	EnvVars      map[string]string
+	DeploymentID   string
+	ServiceID      string
+	ServiceSlug    string
+	RepoURL        string
+	Branch         string
+	CommitSHA      string
+	BuildMethod    string // "nixpacks" or "dockerfile"
+	RootDir        string // Subdirectory in repository for monorepo support
+	DockerfilePath string
+	EnvVars        map[string]string
 }
 
 // BuildResult holds the output of a completed build.
@@ -115,14 +117,29 @@ func (e *Engine) Build(ctx context.Context, opts BuildOptions) (*BuildResult, er
 		_ = checkoutCmd.Run()
 	}
 
-	// Step 3: Execute build based on method
-	var buildErr error
-	dockerfilePath := filepath.Join(workDir, "Dockerfile")
-	hasDockerfile := fileExists(dockerfilePath)
+	// Step 3: Determine build directory (monorepo root directory support)
+	buildDir := workDir
+	if opts.RootDir != "" && opts.RootDir != "." {
+		buildDir = filepath.Join(workDir, opts.RootDir)
+		appendLog(fmt.Sprintf("[klouds-builder] Monorepo subdirectory configured: %s", opts.RootDir))
+	}
 
+	// Determine Dockerfile path
+	dfName := "Dockerfile"
+	if opts.DockerfilePath != "" {
+		dfName = opts.DockerfilePath
+	}
+	actualDockerfilePath := filepath.Join(buildDir, dfName)
+	if !fileExists(actualDockerfilePath) {
+		actualDockerfilePath = filepath.Join(workDir, dfName)
+	}
+	hasDockerfile := fileExists(actualDockerfilePath)
+
+	// Step 4: Execute build based on method
+	var buildErr error
 	if opts.BuildMethod == "dockerfile" || (opts.BuildMethod == "auto" && hasDockerfile) {
-		appendLog("[klouds-builder] Building via Dockerfile...")
-		buildCmd := exec.CommandContext(ctx, "docker", "build", "-t", imageTag, workDir)
+		appendLog(fmt.Sprintf("[klouds-builder] Building via Dockerfile (%s)...", actualDockerfilePath))
+		buildCmd := exec.CommandContext(ctx, "docker", "build", "-t", imageTag, "-f", actualDockerfilePath, buildDir)
 		buildCmd.Stdout = logWriter
 		buildCmd.Stderr = logWriter
 		buildErr = buildCmd.Run()
@@ -130,7 +147,7 @@ func (e *Engine) Build(ctx context.Context, opts BuildOptions) (*BuildResult, er
 		// Use Nixpacks
 		appendLog("[klouds-builder] Building via Nixpacks engine...")
 		if isCommandAvailable("nixpacks") {
-			nixArgs := []string{"build", workDir, "--name", imageTag}
+			nixArgs := []string{"build", buildDir, "--name", imageTag}
 			for k, v := range opts.EnvVars {
 				nixArgs = append(nixArgs, "--env", fmt.Sprintf("%s=%s", k, v))
 			}
@@ -144,7 +161,7 @@ func (e *Engine) Build(ctx context.Context, opts BuildOptions) (*BuildResult, er
 			dockerArgs := []string{
 				"run", "--rm",
 				"-v", "/var/run/docker.sock:/var/run/docker.sock",
-				"-v", fmt.Sprintf("%s:/app:ro", workDir),
+				"-v", fmt.Sprintf("%s:/app:ro", buildDir),
 				"ghcr.io/railwayapp/nixpacks:latest",
 				"build", "/app", "--name", imageTag,
 			}

@@ -110,6 +110,7 @@ type Service struct {
 	BuildMethod     string    `json:"build_method"`
 	RepoURL         *string   `json:"repo_url"`
 	Branch          *string   `json:"branch"`
+	RootDirectory   string    `json:"root_directory"`
 	DockerfilePath  *string   `json:"dockerfile_path"`
 	BuildCommand    *string   `json:"build_command"`
 	StartCommand    *string   `json:"start_command"`

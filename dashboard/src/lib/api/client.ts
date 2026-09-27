@@ -33,6 +33,7 @@ export interface Service {
   id: string;
   project_id: string;
   name: string;
+  root_dir?: string;
   source_type: 'git' | 'dockerfile' | 'image';
   git_repo?: string;
   git_branch?: string;
@@ -47,6 +48,39 @@ export interface Service {
   memory_limit: number;
   created_at: string;
   updated_at: string;
+}
+
+export interface BlueprintService {
+  name: string;
+  type: string;
+  env: string;
+  build_method?: string;
+  root_dir?: string;
+  build_command?: string;
+  start_command?: string;
+  dockerfile_path?: string;
+  port?: number;
+  health_check_path?: string;
+  auto_deploy?: boolean;
+}
+
+export interface BlueprintDatabase {
+  name: string;
+  engine: string;
+  version?: string;
+  database_name?: string;
+  user?: string;
+}
+
+export interface Blueprint {
+  version: string;
+  services: BlueprintService[];
+  databases?: BlueprintDatabase[];
+}
+
+export interface DetectionResult {
+  blueprint: Blueprint;
+  source: string;
 }
 
 export interface Database {
@@ -206,11 +240,35 @@ class ApiClient {
     source_type: string;
     git_repo?: string;
     git_branch?: string;
+    root_dir?: string;
     docker_image?: string;
     port: number;
     env_vars?: Record<string, string>;
   }): Promise<Service> {
     return this.request('/api/services', {
+      method: 'POST',
+      body: JSON.stringify(data)
+    });
+  }
+
+  // Blueprints & Monorepo Multi-Service
+  async detectBlueprint(projectId: string, repoUrl: string, branch?: string): Promise<DetectionResult> {
+    return this.request(`/api/projects/${projectId}/blueprint/detect`, {
+      method: 'POST',
+      body: JSON.stringify({ repo_url: repoUrl, branch })
+    });
+  }
+
+  async applyBlueprint(projectId: string, data: { repo_url?: string; branch?: string; yaml_content?: string }): Promise<{
+    status: string;
+    result: {
+      services_created: string[];
+      services_updated: string[];
+      databases: string[];
+      deployments: string[];
+    };
+  }> {
+    return this.request(`/api/projects/${projectId}/blueprint/apply`, {
       method: 'POST',
       body: JSON.stringify(data)
     });

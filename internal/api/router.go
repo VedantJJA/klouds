@@ -61,6 +61,7 @@ func NewRouter(cfg RouterConfig) *chi.Mux {
 	adminHandler := NewAdminHandler(cfg.Pool, cfg.Containers)
 	metricsHandler := NewMetricsHandler()
 	webhookHandler := webhook.NewHandler(cfg.Pool, cfg.Engine, cfg.Deployer)
+	blueprintHandler := NewBlueprintHandler(cfg.Pool, cfg.DataDir, cfg.Encryptor, cfg.Containers, cfg.Engine, cfg.Deployer)
 
 	r.Route("/api", func(r chi.Router) {
 		// --- Public routes (no auth) ---
@@ -70,6 +71,7 @@ func NewRouter(cfg RouterConfig) *chi.Mux {
 		})
 
 		// Git Webhooks (public with signature verification)
+		r.Post("/webhooks/github/repo", webhookHandler.HandleGitHubRepo)
 		r.Post("/webhooks/github/{serviceID}", webhookHandler.HandleGitHub)
 
 		// Automated TLS on-demand check (called by Caddy to verify domain before issuing SSL certificate)
@@ -115,6 +117,11 @@ func NewRouter(cfg RouterConfig) *chi.Mux {
 			r.Get("/projects", projectHandler.List)
 			r.Get("/projects/{projectID}", projectHandler.Get)
 			r.Delete("/projects/{projectID}", projectHandler.Delete)
+
+			// Blueprints & Multi-Service Auto Detection
+			r.Post("/projects/{projectID}/blueprint/detect", blueprintHandler.Detect)
+			r.Post("/projects/{projectID}/blueprint/preview", blueprintHandler.Preview)
+			r.Post("/projects/{projectID}/blueprint/apply", blueprintHandler.Apply)
 
 			// Services
 			r.Post("/services", serviceHandler.Create)
