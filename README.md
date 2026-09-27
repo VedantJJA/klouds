@@ -1,20 +1,21 @@
-# Klouds ☁️
+# Klouds
 
 A lightweight, self-hosted PaaS (Platform as a Service) built in Go, combining the best of Dokploy and Render. Optimized for ARM64 and constrained environments.
 
 ## Features
 
-- **Git Push-to-Deploy** — Connect a GitHub repo, deploy on push
-- **Nixpacks Auto-Build** — Auto-detect language, build without Dockerfile
-- **Managed Databases** — PostgreSQL, MySQL, Redis, MongoDB
-- **Wildcard Subdomain Routing** — `<slug>.yourdomain.com` for each service
-- **Redirects & Rewrites** — First-class routing rules via Caddy
-- **Admin Approval System** — Users register, admin approves
-- **Resource Quotas** — Per-user CPU/memory/disk limits
-- **VM Metrics Dashboard** — Live CPU, RAM, disk monitoring
-- **Blueprint IaC** — `klouds.yaml` to declare your entire stack
-- **Single Port Architecture** — Only port 443 exposed
-- **ARM64 Native** — Built for Oracle Ampere A1
+- **Git Push-to-Deploy** - Connect a GitHub repo, deploy on push
+- **Nixpacks Auto-Build** - Auto-detect language, build without Dockerfile
+- **Managed Databases** - PostgreSQL, MySQL, Redis, MongoDB
+- **Wildcard Subdomain Routing** - `<slug>.yourdomain.com` for each service
+- **Automated SSL/TLS** - On-demand Let's Encrypt / ZeroSSL certificate management
+- **Redirects & Rewrites** - First-class routing rules via Caddy
+- **Admin Approval System** - Users register, admin approves
+- **Resource Quotas** - Per-user CPU/memory/disk limits
+- **VM Metrics Dashboard** - Live CPU, RAM, disk monitoring
+- **Blueprint IaC** - `klouds.yaml` to declare your entire stack
+- **Single Port Architecture** - Only port 443 exposed
+- **ARM64 Native** - Built for Oracle Ampere A1
 
 ## Quick Start
 
@@ -73,8 +74,8 @@ GOOS=linux GOARCH=arm64 CGO_ENABLED=0 go build -ldflags="-s -w" -o bin/klouds-se
 
 ## Architecture
 
-- **API Server**: Go (chi router, pgx, zerolog) — ~13 MB binary, ~20 MB RAM
-- **Reverse Proxy**: Caddy v2 — auto HTTPS, redirects, rewrites
+- **API Server**: Go (chi router, pgx, zerolog) - ~13 MB binary, ~20 MB RAM
+- **Reverse Proxy**: Caddy v2 - auto HTTPS, redirects, rewrites
 - **Database**: PostgreSQL (system) + managed user databases
 - **Containers**: Docker Engine with resource limits
 - **Auth**: HMAC-SHA256 signed tokens, bcrypt passwords

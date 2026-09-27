@@ -106,7 +106,7 @@ func (m *Manager) CreateServiceContainer(ctx context.Context, cfg ServiceConfig)
 	// Resource limits
 	hostConfig := &mobycontainer.HostConfig{
 		Resources: mobycontainer.Resources{
-			NanoCPUs: cfg.CPULimit * 1_000_000, // millicores → nanocpus
+			NanoCPUs: cfg.CPULimit * 1_000_000, // millicores to nanocpus
 			Memory:   cfg.MemoryLimit,
 		},
 		RestartPolicy: mobycontainer.RestartPolicy{
@@ -115,7 +115,7 @@ func (m *Manager) CreateServiceContainer(ctx context.Context, cfg ServiceConfig)
 		SecurityOpt: []string{"no-new-privileges"},
 	}
 
-	// Network config — attach to klouds-internal
+	// Network config - attach to klouds-internal
 	networkConfig := &mobynetwork.NetworkingConfig{
 		EndpointsConfig: map[string]*mobynetwork.EndpointSettings{
 			m.networkName: {

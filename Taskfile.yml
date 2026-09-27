@@ -1,4 +1,4 @@
-# Klouds — Task Runner Configuration
+# Klouds - Task Runner Configuration
 # Install: go install github.com/go-task/task/v3/cmd/task@latest
 # Usage: task dev, task build, task migrate, etc.
 

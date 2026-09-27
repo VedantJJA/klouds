@@ -1,14 +1,21 @@
-# Klouds — Production Caddyfile Template
+# Klouds - Production Caddyfile Template
 # Replace KLOUDS_DOMAIN with your actual domain.
-# This file is a template; the actual config is generated dynamically
-# via the Caddy JSON API by the Klouds API server.
+# This file is a template; dynamic routing is also applied via Caddy JSON API.
 
 {
     email admin@{$KLOUDS_DOMAIN}
     admin :2019
+
+    # Automated SSL/TLS on-demand verification
+    # Protects against rate limits and unauthorized cert issuance
+    on_demand_tls {
+        ask http://klouds-api:8080/api/tls/check
+        interval 2m
+        burst 5
+    }
 }
 
-# Platform dashboard & API
+# Platform dashboard & API with automatic TLS
 {$KLOUDS_DOMAIN} {
     # API
     handle /api/* {
@@ -33,10 +40,12 @@
     }
 }
 
-# Wildcard subdomain routing for user services
-# This is a catch-all; the Klouds API dynamically manages routes via Caddy's JSON API.
+# Automated TLS for all hosted user applications and custom domains
 *.{$KLOUDS_DOMAIN} {
+    tls {
+        on_demand
+    }
+
     # Dynamic upstream resolution happens via Caddy JSON API
-    # This block is a placeholder for initial setup
-    respond "Service not found" 404
+    respond "Service not found or starting up" 404
 }

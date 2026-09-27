@@ -75,7 +75,7 @@ func (c *Collector) collectLinux(m *SystemMetrics) {
 			if len(parts) >= 2 {
 				key := strings.TrimSuffix(parts[0], ":")
 				val, _ := strconv.ParseInt(parts[1], 10, 64)
-				memInfo[key] = val * 1024 // kB → bytes
+				memInfo[key] = val * 1024 // kB to bytes
 			}
 		}
 		m.MemoryTotal = memInfo["MemTotal"]

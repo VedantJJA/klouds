@@ -171,7 +171,7 @@ func (h *AdminHandler) UpdateUserQuota(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, quota)
 }
 
-// ListAllServices handles GET /api/admin/services — lists services across all users.
+// ListAllServices handles GET /api/admin/services - lists services across all users.
 func (h *AdminHandler) ListAllServices(w http.ResponseWriter, r *http.Request) {
 	services, err := h.queries.ListAllServices(r.Context())
 	if err != nil {

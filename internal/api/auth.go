@@ -131,7 +131,7 @@ func (h *AuthHandler) Register(w http.ResponseWriter, r *http.Request) {
 
 	_, err = h.queries.CreateUserQuota(r.Context(), quotaParams)
 	if err != nil {
-		// Non-fatal — quota can be created later
+		// Non-fatal - quota can be created later
 		_ = err
 	}
 

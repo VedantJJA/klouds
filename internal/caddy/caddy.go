@@ -27,7 +27,7 @@ func NewManager(adminAPI, domain string) *Manager {
 
 // Route represents a Caddy route to a backend container.
 type Route struct {
-	Subdomain    string // e.g. "myapp" → myapp.domain.com
+	Subdomain    string // e.g. "myapp" -> myapp.domain.com
 	BackendHost  string // Docker network hostname
 	BackendPort  int    // Container internal port
 	Redirects    []RedirectRule
@@ -56,11 +56,17 @@ func (m *Manager) GenerateCaddyfile(routes []Route) string {
 	buf.WriteString("{\n")
 	buf.WriteString("    admin off\n")
 	buf.WriteString("    email admin@" + m.domain + "\n")
+	buf.WriteString("    on_demand_tls {\n")
+	buf.WriteString("        ask http://127.0.0.1:8080/api/tls/check\n")
+	buf.WriteString("        interval 2m\n")
+	buf.WriteString("        burst 5\n")
+	buf.WriteString("    }\n")
 	buf.WriteString("}\n\n")
 
 	for _, route := range routes {
 		host := fmt.Sprintf("%s.%s", route.Subdomain, m.domain)
 		buf.WriteString(fmt.Sprintf("%s {\n", host))
+		buf.WriteString("    tls {\n        on_demand\n    }\n")
 
 		// Redirects
 		for _, redir := range route.Redirects {
@@ -132,6 +138,18 @@ func (m *Manager) CaddyJSON(routes []Route) map[string]interface{} {
 
 	return map[string]interface{}{
 		"apps": map[string]interface{}{
+			"tls": map[string]interface{}{
+				"automation": map[string]interface{}{
+					"policies": []map[string]interface{}{
+						{
+							"on_demand": true,
+						},
+					},
+					"on_demand": map[string]interface{}{
+						"ask": "http://127.0.0.1:8080/api/tls/check",
+					},
+				},
+			},
 			"http": map[string]interface{}{
 				"servers": map[string]interface{}{
 					"klouds": map[string]interface{}{

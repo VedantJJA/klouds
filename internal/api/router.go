@@ -2,6 +2,7 @@ package api
 
 import (
 	"net/http"
+	"strings"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
@@ -11,6 +12,7 @@ import (
 	"github.com/vedant/klouds/internal/builder"
 	"github.com/vedant/klouds/internal/caddy"
 	"github.com/vedant/klouds/internal/container"
+	"github.com/vedant/klouds/internal/db"
 	"github.com/vedant/klouds/internal/secrets"
 	"github.com/vedant/klouds/internal/webhook"
 )
@@ -69,6 +71,37 @@ func NewRouter(cfg RouterConfig) *chi.Mux {
 
 		// Git Webhooks (public with signature verification)
 		r.Post("/webhooks/github/{serviceID}", webhookHandler.HandleGitHub)
+
+		// Automated TLS on-demand check (called by Caddy to verify domain before issuing SSL certificate)
+		r.Get("/tls/check", func(w http.ResponseWriter, r *http.Request) {
+			domain := r.URL.Query().Get("domain")
+			if domain == "" {
+				http.Error(w, "missing domain parameter", http.StatusBadRequest)
+				return
+			}
+
+			// Allow platform base domain and subdomains of platform domain
+			if domain == cfg.Domain || strings.HasSuffix(domain, "."+cfg.Domain) {
+				w.WriteHeader(http.StatusOK)
+				_, _ = w.Write([]byte("ok"))
+				return
+			}
+
+			// Check if custom domain belongs to an active service
+			queries := db.New(cfg.Pool)
+			services, err := queries.ListAllServices(r.Context())
+			if err == nil {
+				for _, svc := range services {
+					if svc.Subdomain == domain {
+						w.WriteHeader(http.StatusOK)
+						_, _ = w.Write([]byte("ok"))
+						return
+					}
+				}
+			}
+
+			http.Error(w, "domain not registered", http.StatusForbidden)
+		})
 
 		// --- Authenticated routes ---
 		r.Group(func(r chi.Router) {
