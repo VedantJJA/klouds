@@ -1,4 +1,4 @@
-// Klouds API Server — the main entrypoint for the Klouds PaaS platform.
+// Klouds API Server - the main entrypoint for the Klouds PaaS platform.
 package main
 
 import (
@@ -15,6 +15,8 @@ import (
 
 	"github.com/vedant/klouds/internal/api"
 	"github.com/vedant/klouds/internal/auth"
+	"github.com/vedant/klouds/internal/builder"
+	"github.com/vedant/klouds/internal/caddy"
 	"github.com/vedant/klouds/internal/config"
 	"github.com/vedant/klouds/internal/container"
 	"github.com/vedant/klouds/internal/db"
@@ -26,7 +28,7 @@ func main() {
 	zerolog.TimeFieldFormat = zerolog.TimeFormatUnix
 	log.Logger = log.Output(zerolog.ConsoleWriter{Out: os.Stderr, TimeFormat: time.RFC3339})
 
-	log.Info().Msg("☁️  Klouds — Starting API Server")
+	log.Info().Msg("Klouds - Starting API Server")
 
 	// Load configuration
 	cfg, err := config.Load()
@@ -44,7 +46,7 @@ func main() {
 		log.Fatal().Err(err).Msg("Failed to connect to database")
 	}
 	defer pool.Close()
-	log.Info().Msg("✅ Database connected")
+	log.Info().Msg("Database connected successfully")
 
 	// Run migrations
 	if err := runMigrations(cfg.DatabaseURL); err != nil {
@@ -68,8 +70,15 @@ func main() {
 		if err := containerMgr.EnsureNetwork(ctx); err != nil {
 			log.Warn().Err(err).Msg("Failed to create Docker network")
 		}
-		log.Info().Msg("✅ Docker connected")
+		log.Info().Msg("Docker connected successfully")
 	}
+
+	// Initialize Caddy proxy manager
+	caddyMgr := caddy.NewManager(cfg.CaddyAdminAPI, cfg.Domain)
+
+	// Initialize Nixpacks build engine and blue-green deployer
+	buildEngine := builder.NewEngine(pool, cfg.DataDir)
+	deployer := builder.NewDeployer(pool, containerMgr, caddyMgr, cfg.Domain)
 
 	// Build router
 	router := api.NewRouter(api.RouterConfig{
@@ -77,6 +86,9 @@ func main() {
 		TokenSvc:   tokenSvc,
 		Containers: containerMgr,
 		Encryptor:  encryptor,
+		Caddy:      caddyMgr,
+		Engine:     buildEngine,
+		Deployer:   deployer,
 		Domain:     cfg.Domain,
 		DataDir:    cfg.DataDir,
 	})
@@ -110,7 +122,7 @@ func main() {
 	log.Info().
 		Str("addr", cfg.Addr()).
 		Str("domain", cfg.Domain).
-		Msg("🚀 Klouds API Server is running")
+		Msg("Klouds API Server is running")
 
 	if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 		log.Fatal().Err(err).Msg("Server error")
@@ -132,13 +144,13 @@ func runMigrations(databaseURL string) error {
 		return fmt.Errorf("run migrations: %w", err)
 	}
 
-	log.Info().Msg("✅ Database migrations applied")
+	log.Info().Msg("Database migrations applied successfully")
 	return nil
 }
 
 // maskDSN hides the password in a DSN for logging.
 func maskDSN(dsn string) string {
-	// Simple masking — find password between : and @ after ://
+	// Simple masking - find password between : and @ after ://
 	start := 0
 	for i := 0; i < len(dsn)-3; i++ {
 		if dsn[i] == ':' && dsn[i+1] == '/' && dsn[i+2] == '/' {

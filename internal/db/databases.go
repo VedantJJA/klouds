@@ -175,6 +175,11 @@ func (q *Queries) UpdateDeploymentFinished(ctx context.Context, id string, statu
 	return scanDeployment(row)
 }
 
+func (q *Queries) UpdateDeploymentLog(ctx context.Context, id string, buildLog string) error {
+	_, err := q.db.Exec(ctx, `UPDATE deployments SET build_log = $2 WHERE id = $1`, id, buildLog)
+	return err
+}
+
 func (q *Queries) CountDeploymentsToday(ctx context.Context, userID string) (int64, error) {
 	row := q.db.QueryRow(ctx,
 		`SELECT COUNT(*) FROM deployments WHERE user_id = $1 AND created_at >= CURRENT_DATE`,

@@ -8,8 +8,11 @@ import (
 	"github.com/go-chi/cors"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/vedant/klouds/internal/auth"
+	"github.com/vedant/klouds/internal/builder"
+	"github.com/vedant/klouds/internal/caddy"
 	"github.com/vedant/klouds/internal/container"
 	"github.com/vedant/klouds/internal/secrets"
+	"github.com/vedant/klouds/internal/webhook"
 )
 
 // RouterConfig holds dependencies for the router.
@@ -18,6 +21,9 @@ type RouterConfig struct {
 	TokenSvc   *auth.TokenService
 	Containers *container.Manager
 	Encryptor  *secrets.Encryptor
+	Caddy      *caddy.Manager
+	Engine     *builder.Engine
+	Deployer   *builder.Deployer
 	Domain     string
 	DataDir    string
 }
@@ -48,10 +54,11 @@ func NewRouter(cfg RouterConfig) *chi.Mux {
 	// Initialize handlers
 	authHandler := NewAuthHandler(cfg.Pool, cfg.TokenSvc)
 	projectHandler := NewProjectHandler(cfg.Pool)
-	serviceHandler := NewServiceHandler(cfg.Pool, cfg.Containers, cfg.Domain)
+	serviceHandler := NewServiceHandler(cfg.Pool, cfg.Containers, cfg.Engine, cfg.Deployer, cfg.Domain)
 	dbHandler := NewDatabaseHandler(cfg.Pool, cfg.Containers, cfg.Encryptor, cfg.Domain, cfg.DataDir)
 	adminHandler := NewAdminHandler(cfg.Pool, cfg.Containers)
 	metricsHandler := NewMetricsHandler()
+	webhookHandler := webhook.NewHandler(cfg.Pool, cfg.Engine, cfg.Deployer)
 
 	r.Route("/api", func(r chi.Router) {
 		// --- Public routes (no auth) ---
@@ -59,6 +66,9 @@ func NewRouter(cfg RouterConfig) *chi.Mux {
 			r.Post("/register", authHandler.Register)
 			r.Post("/login", authHandler.Login)
 		})
+
+		// Git Webhooks (public with signature verification)
+		r.Post("/webhooks/github/{serviceID}", webhookHandler.HandleGitHub)
 
 		// --- Authenticated routes ---
 		r.Group(func(r chi.Router) {
@@ -77,6 +87,7 @@ func NewRouter(cfg RouterConfig) *chi.Mux {
 			r.Post("/services", serviceHandler.Create)
 			r.Get("/services", serviceHandler.List)
 			r.Get("/services/{serviceID}", serviceHandler.Get)
+			r.Post("/services/{serviceID}/deploy", serviceHandler.Deploy)
 			r.Post("/services/{serviceID}/stop", serviceHandler.Stop)
 			r.Post("/services/{serviceID}/restart", serviceHandler.Restart)
 			r.Delete("/services/{serviceID}", serviceHandler.Delete)

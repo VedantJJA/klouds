@@ -1,12 +1,14 @@
 package api
 
 import (
+	"context"
 	"fmt"
 	"net/http"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/rs/zerolog/log"
+	"github.com/vedant/klouds/internal/builder"
 	"github.com/vedant/klouds/internal/container"
 	"github.com/vedant/klouds/internal/db"
 )
@@ -16,15 +18,19 @@ type ServiceHandler struct {
 	queries    *db.Queries
 	pool       *pgxpool.Pool
 	containers *container.Manager
+	engine     *builder.Engine
+	deployer   *builder.Deployer
 	domain     string // Base domain for subdomain routing
 }
 
 // NewServiceHandler creates a new service handler.
-func NewServiceHandler(pool *pgxpool.Pool, containers *container.Manager, domain string) *ServiceHandler {
+func NewServiceHandler(pool *pgxpool.Pool, containers *container.Manager, engine *builder.Engine, deployer *builder.Deployer, domain string) *ServiceHandler {
 	return &ServiceHandler{
 		queries:    db.New(pool),
 		pool:       pool,
 		containers: containers,
+		engine:     engine,
+		deployer:   deployer,
 		domain:     domain,
 	}
 }
@@ -345,4 +351,75 @@ func (h *ServiceHandler) Deployments(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writeJSON(w, http.StatusOK, deployments)
+}
+
+// Deploy handles POST /api/services/{serviceID}/deploy
+func (h *ServiceHandler) Deploy(w http.ResponseWriter, r *http.Request) {
+	serviceID := chi.URLParam(r, "serviceID")
+	userID := getUserID(r.Context())
+	role := getUserRole(r.Context())
+
+	svc, err := h.queries.GetServiceByID(r.Context(), serviceID)
+	if err != nil {
+		writeError(w, http.StatusNotFound, "service not found")
+		return
+	}
+
+	if role != "admin" && svc.UserID != userID {
+		writeError(w, http.StatusForbidden, "access denied")
+		return
+	}
+
+	trigger := "manual"
+	commitMsg := "Manual deployment triggered from control panel"
+	imageTag := fmt.Sprintf("klouds/%s:manual", svc.Slug)
+
+	dep, err := h.queries.CreateDeployment(r.Context(), db.CreateDeploymentParams{
+		ServiceID: svc.ID,
+		UserID:    svc.UserID,
+		Status:    "building",
+		CommitMsg: &commitMsg,
+		ImageTag:  imageTag,
+		Trigger:   trigger,
+	})
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to create deployment record")
+		return
+	}
+
+	if h.engine != nil && h.deployer != nil {
+		go func() {
+			ctx := context.Background()
+			repoURL := ""
+			if svc.RepoURL != nil {
+				repoURL = *svc.RepoURL
+			}
+			branch := "main"
+			if svc.Branch != nil && *svc.Branch != "" {
+				branch = *svc.Branch
+			}
+
+			buildRes, err := h.engine.Build(ctx, builder.BuildOptions{
+				DeploymentID: dep.ID,
+				ServiceID:    svc.ID,
+				ServiceSlug:  svc.Slug,
+				RepoURL:      repoURL,
+				Branch:       branch,
+				BuildMethod:  svc.BuildMethod,
+			})
+			if err != nil {
+				log.Error().Err(err).Str("deployment", dep.ID).Msg("Build failed")
+				_, _ = h.queries.UpdateDeploymentFinished(ctx, dep.ID, "failed", 0)
+				return
+			}
+
+			_ = h.deployer.Deploy(ctx, builder.DeployRequest{
+				ServiceID:    svc.ID,
+				DeploymentID: dep.ID,
+				ImageTag:     buildRes.ImageTag,
+			})
+		}()
+	}
+
+	writeJSON(w, http.StatusAccepted, dep)
 }
