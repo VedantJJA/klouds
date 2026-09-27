@@ -177,12 +177,21 @@ func (e *Engine) Build(ctx context.Context, opts BuildOptions) (*BuildResult, er
 		for k, v := range opts.EnvVars {
 			effectiveEnvVars[k] = v
 		}
+		var installCmd string
 		if fileExists(filepath.Join(buildDir, "package.json")) {
 			if _, ok := effectiveEnvVars["NIXPACKS_NODE_VERSION"]; !ok {
 				if _, ok2 := effectiveEnvVars["NODE_VERSION"]; !ok2 {
 					effectiveEnvVars["NIXPACKS_NODE_VERSION"] = "22"
 				}
 			}
+			// Ensure npm 10 is used so platform-specific native binaries (e.g. linux-arm64 rolldown) install properly
+			if !fileExists(filepath.Join(buildDir, "pnpm-lock.yaml")) && !fileExists(filepath.Join(buildDir, "yarn.lock")) {
+				installCmd = "npm install -g npm@10 && npm ci"
+			}
+		}
+
+		if installCmd != "" {
+			nixArgs = append(nixArgs, "--install-cmd", installCmd)
 		}
 
 		for k, v := range effectiveEnvVars {
@@ -203,6 +212,9 @@ func (e *Engine) Build(ctx context.Context, opts BuildOptions) (*BuildResult, er
 				"-v", fmt.Sprintf("%s:/app:ro", buildDir),
 				"ghcr.io/railwayapp/nixpacks:latest",
 				"build", "/app", "--name", imageTag,
+			}
+			if installCmd != "" {
+				dockerArgs = append(dockerArgs, "--install-cmd", installCmd)
 			}
 			if opts.BuildCommand != "" {
 				dockerArgs = append(dockerArgs, "--build-cmd", opts.BuildCommand)
