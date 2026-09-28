@@ -585,25 +585,25 @@ func (h *OAuthHandler) ListBranches(w http.ResponseWriter, r *http.Request) {
 
 	// Parse owner/repo from URL
 	provider, owner, repo := parseRepoURL(repoURL)
-	if provider == "" || owner == "" || repo == "" {
-		writeJSON(w, http.StatusOK, []string{"main", "master"})
-		return
-	}
 
 	// Check if user has an account connected for this provider
 	token := ""
-	if acc, err := h.queries.GetUserOAuthAccount(r.Context(), userID, provider); err == nil {
-		if decrypted, decErr := h.encryptor.Decrypt(acc.AccessTokenEncrypted); decErr == nil {
-			token = decrypted
+	if provider != "" {
+		if acc, err := h.queries.GetUserOAuthAccount(r.Context(), userID, provider); err == nil {
+			if decrypted, decErr := h.encryptor.Decrypt(acc.AccessTokenEncrypted); decErr == nil {
+				token = decrypted
+			}
 		}
 	}
 
 	var customAPIURL *string
-	if pCfg, cfgErr := h.queries.GetOAuthProviderConfig(r.Context(), provider); cfgErr == nil {
-		customAPIURL = pCfg.APIURL
+	if provider != "" {
+		if pCfg, cfgErr := h.queries.GetOAuthProviderConfig(r.Context(), provider); cfgErr == nil {
+			customAPIURL = pCfg.APIURL
+		}
 	}
 
-	branches, err := oauth.FetchBranches(r.Context(), provider, token, owner, repo, customAPIURL)
+	branches, err := oauth.FetchBranches(r.Context(), provider, token, owner, repo, repoURL, customAPIURL)
 	if err != nil || len(branches) == 0 {
 		writeJSON(w, http.StatusOK, []string{"main", "master"})
 		return
@@ -613,10 +613,32 @@ func (h *OAuthHandler) ListBranches(w http.ResponseWriter, r *http.Request) {
 }
 
 func parseRepoURL(raw string) (provider, owner, repo string) {
-	clean := strings.TrimSuffix(strings.TrimSpace(raw), ".git")
-	clean = strings.TrimPrefix(clean, "git@github.com:")
-	clean = strings.TrimPrefix(clean, "git@gitlab.com:")
-	clean = strings.TrimPrefix(clean, "git@bitbucket.org:")
+	clean := strings.TrimSpace(raw)
+	clean = strings.TrimSuffix(clean, ".git")
+
+	// Check SSH formats like git@github.com:owner/repo
+	if strings.Contains(clean, "@") && strings.Contains(clean, ":") {
+		parts := strings.SplitN(clean, ":", 2)
+		if len(parts) == 2 {
+			if strings.Contains(parts[0], "github") {
+				provider = "github"
+			} else if strings.Contains(parts[0], "gitlab") {
+				provider = "gitlab"
+			} else if strings.Contains(parts[0], "bitbucket") {
+				provider = "bitbucket"
+			}
+			pathParts := strings.Split(strings.Trim(parts[1], "/"), "/")
+			if len(pathParts) >= 2 {
+				owner = pathParts[0]
+				repo = pathParts[1]
+				return
+			}
+		}
+	}
+
+	if !strings.HasPrefix(clean, "http://") && !strings.HasPrefix(clean, "https://") && strings.Contains(clean, "/") {
+		clean = "https://" + clean
+	}
 
 	u, err := url.Parse(clean)
 	if err == nil && u.Host != "" {

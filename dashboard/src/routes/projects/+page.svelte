@@ -79,121 +79,80 @@
     </a>
   </div>
 {:else}
-  <div class="projects-grid">
-    {#each projects as project}
-      <div class="card project-card">
-        <div class="project-card-top">
-          <div class="project-badge-icon">
-            <FolderKanban size={18} />
-          </div>
-          <button
-            class="btn-icon text-muted"
-            title="Delete project"
-            onclick={() => handleDelete(project.id, project.name)}
-          >
-            <Trash2 size={15} />
-          </button>
-        </div>
-
-        <h3 class="project-title">
-          <a href={`/projects/${project.id}`}>{project.name}</a>
-        </h3>
-
-        <p class="project-desc">
-          {project.description || 'No description provided'}
-        </p>
-
-        <div class="project-footer">
-          <div class="flex items-center gap-1 text-xs text-muted">
-            <Calendar size={13} />
-            <span>{new Date(project.created_at).toLocaleDateString()}</span>
-          </div>
-
-          <a href={`/projects/${project.id}`} class="btn btn-secondary btn-sm">
-            <span>View Services</span>
-            <ArrowRight size={13} />
-          </a>
-        </div>
-      </div>
-    {/each}
+  <div class="card p-0">
+    <div class="table-wrapper">
+      <table>
+        <thead>
+          <tr>
+            <th>Project Name</th>
+            <th>Description</th>
+            <th>Slug</th>
+            <th>Created</th>
+            <th style="text-align: right;">Actions</th>
+          </tr>
+        </thead>
+        <tbody>
+          {#each projects as project}
+            <tr>
+              <td>
+                <div class="flex items-center gap-2">
+                  <div class="project-list-icon">
+                    <FolderKanban size={16} />
+                  </div>
+                  <a href={`/projects/${project.id}`} class="project-name-link font-semibold">
+                    {project.name}
+                  </a>
+                </div>
+              </td>
+              <td class="text-muted text-sm">{project.description || 'No description provided'}</td>
+              <td><span class="font-mono text-xs text-muted">{project.slug}</span></td>
+              <td class="font-mono text-xs text-muted">{new Date(project.created_at).toLocaleDateString()}</td>
+              <td style="text-align: right;">
+                <div class="flex items-center justify-end gap-2">
+                  <a href={`/projects/${project.id}`} class="btn btn-secondary btn-sm">
+                    <span>View Project</span>
+                    <ArrowRight size={13} />
+                  </a>
+                  <button
+                    class="btn btn-danger btn-sm"
+                    title="Delete project"
+                    onclick={() => handleDelete(project.id, project.name)}
+                  >
+                    <Trash2 size={13} />
+                  </button>
+                </div>
+              </td>
+            </tr>
+          {/each}
+        </tbody>
+      </table>
+    </div>
   </div>
 {/if}
 
 <style>
-  .projects-grid {
-    display: grid;
-    grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
-    gap: var(--sp-4);
-  }
-
-  .project-card {
-    display: flex;
-    flex-direction: column;
-    justify-content: space-between;
-    min-height: 180px;
-  }
-
-  .project-card-top {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    margin-bottom: var(--sp-3);
-  }
-
-  .project-badge-icon {
-    width: 32px;
-    height: 32px;
+  .project-list-icon {
+    width: 28px;
+    height: 28px;
     background: var(--color-surface-subtle);
     border: 1px solid var(--color-border);
-    border-radius: var(--radius-sm);
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    color: var(--color-ink);
-  }
-
-  .btn-icon {
-    background: transparent;
-    border: none;
-    cursor: pointer;
-    padding: 4px;
     border-radius: var(--radius-sm);
     display: inline-flex;
     align-items: center;
     justify-content: center;
+    color: var(--color-ink);
+    flex-shrink: 0;
   }
 
-  .btn-icon:hover {
-    color: var(--color-danger);
-    background: var(--color-surface-subtle);
-  }
-
-  .project-title {
-    margin-bottom: 6px;
-  }
-
-  .project-title a {
+  .project-name-link {
     color: var(--color-ink);
     text-decoration: none;
+    font-size: 0.875rem;
+    transition: color var(--transition-fast);
   }
 
-  .project-title a:hover {
+  .project-name-link:hover {
+    color: var(--color-accent);
     text-decoration: underline;
-  }
-
-  .project-desc {
-    font-size: 0.8125rem;
-    color: var(--color-ink-secondary);
-    line-height: 1.5;
-    flex: 1;
-    margin-bottom: var(--sp-4);
-  }
-
-  .project-footer {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    border-top: 1px solid var(--color-border-subtle);
-    padding-top: var(--sp-3);
   }
 </style>

@@ -170,6 +170,12 @@ func (q *Queries) GetServiceBySlug(ctx context.Context, slug string) (Service, e
 	return scanService(row)
 }
 
+func (q *Queries) SubdomainExists(ctx context.Context, subdomain string) (bool, error) {
+	var exists bool
+	err := q.db.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM services WHERE subdomain = $1)`, subdomain).Scan(&exists)
+	return exists, err
+}
+
 func (q *Queries) ListServicesByProject(ctx context.Context, projectID string) ([]Service, error) {
 	rows, err := q.db.Query(ctx,
 		`SELECT id, project_id, user_id, name, slug, type, status, build_method,

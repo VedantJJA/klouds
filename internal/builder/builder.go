@@ -188,23 +188,67 @@ func (e *Engine) Build(ctx context.Context, opts BuildOptions) (*BuildResult, er
 			effectiveEnvVars[k] = v
 		}
 
+		// Render-style environment variable versioning support (e.g. NODE_VERSION=20.10.0, PYTHON_VERSION=3.11)
+		if v, ok := opts.EnvVars["NODE_VERSION"]; ok && strings.TrimSpace(v) != "" {
+			effectiveEnvVars["NIXPACKS_NODE_VERSION"] = strings.TrimSpace(v)
+		}
+		if v, ok := opts.EnvVars["PYTHON_VERSION"]; ok && strings.TrimSpace(v) != "" {
+			effectiveEnvVars["NIXPACKS_PYTHON_VERSION"] = strings.TrimSpace(v)
+		}
+		if v, ok := opts.EnvVars["GO_VERSION"]; ok && strings.TrimSpace(v) != "" {
+			effectiveEnvVars["NIXPACKS_GO_VERSION"] = strings.TrimSpace(v)
+		}
+		if v, ok := opts.EnvVars["RUST_VERSION"]; ok && strings.TrimSpace(v) != "" {
+			effectiveEnvVars["NIXPACKS_RUST_VERSION"] = strings.TrimSpace(v)
+		}
+		if v, ok := opts.EnvVars["PHP_VERSION"]; ok && strings.TrimSpace(v) != "" {
+			effectiveEnvVars["NIXPACKS_PHP_VERSION"] = strings.TrimSpace(v)
+		}
+		if v, ok := opts.EnvVars["RUBY_VERSION"]; ok && strings.TrimSpace(v) != "" {
+			effectiveEnvVars["NIXPACKS_RUBY_VERSION"] = strings.TrimSpace(v)
+		}
+		if v, ok := opts.EnvVars["JAVA_VERSION"]; ok && strings.TrimSpace(v) != "" {
+			effectiveEnvVars["NIXPACKS_JDK_VERSION"] = strings.TrimSpace(v)
+		}
+
 		// Inject selected runtime version into Nixpacks configuration
 		if opts.RuntimeVersion != "" {
 			v := strings.TrimSpace(opts.RuntimeVersion)
 			if fileExists(filepath.Join(buildDir, "package.json")) {
 				effectiveEnvVars["NIXPACKS_NODE_VERSION"] = v
+				if _, exists := effectiveEnvVars["NODE_VERSION"]; !exists {
+					effectiveEnvVars["NODE_VERSION"] = v
+				}
 			} else if fileExists(filepath.Join(buildDir, "requirements.txt")) || fileExists(filepath.Join(buildDir, "Pipfile")) || fileExists(filepath.Join(buildDir, "pyproject.toml")) {
 				effectiveEnvVars["NIXPACKS_PYTHON_VERSION"] = v
+				if _, exists := effectiveEnvVars["PYTHON_VERSION"]; !exists {
+					effectiveEnvVars["PYTHON_VERSION"] = v
+				}
 			} else if fileExists(filepath.Join(buildDir, "go.mod")) {
 				effectiveEnvVars["NIXPACKS_GO_VERSION"] = v
+				if _, exists := effectiveEnvVars["GO_VERSION"]; !exists {
+					effectiveEnvVars["GO_VERSION"] = v
+				}
 			} else if fileExists(filepath.Join(buildDir, "composer.json")) {
 				effectiveEnvVars["NIXPACKS_PHP_VERSION"] = v
+				if _, exists := effectiveEnvVars["PHP_VERSION"]; !exists {
+					effectiveEnvVars["PHP_VERSION"] = v
+				}
 			} else if fileExists(filepath.Join(buildDir, "Gemfile")) {
 				effectiveEnvVars["NIXPACKS_RUBY_VERSION"] = v
+				if _, exists := effectiveEnvVars["RUBY_VERSION"]; !exists {
+					effectiveEnvVars["RUBY_VERSION"] = v
+				}
 			} else if fileExists(filepath.Join(buildDir, "pom.xml")) || fileExists(filepath.Join(buildDir, "build.gradle")) {
 				effectiveEnvVars["NIXPACKS_JDK_VERSION"] = v
+				if _, exists := effectiveEnvVars["JAVA_VERSION"]; !exists {
+					effectiveEnvVars["JAVA_VERSION"] = v
+				}
 			} else if fileExists(filepath.Join(buildDir, "Cargo.toml")) {
 				effectiveEnvVars["NIXPACKS_RUST_VERSION"] = v
+				if _, exists := effectiveEnvVars["RUST_VERSION"]; !exists {
+					effectiveEnvVars["RUST_VERSION"] = v
+				}
 			} else {
 				effectiveEnvVars["NIXPACKS_NODE_VERSION"] = v
 			}

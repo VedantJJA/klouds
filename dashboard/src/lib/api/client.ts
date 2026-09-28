@@ -248,10 +248,28 @@ class ApiClient {
     const url = path.startsWith('/') ? path : `/${path}`;
     const headers = { ...this.getHeaders(), ...options.headers };
 
-    const response = await fetch(url, {
-      ...options,
-      headers
-    });
+    let response: Response;
+    try {
+      response = await fetch(url, {
+        ...options,
+        headers
+      });
+    } catch (netErr: any) {
+      // Retry once for GET requests if transient network disconnection occurs
+      if (!options.method || options.method === 'GET') {
+        try {
+          await new Promise(r => setTimeout(r, 600));
+          response = await fetch(url, {
+            ...options,
+            headers
+          });
+        } catch {
+          throw new Error('Unable to connect to Klouds server. Please verify network connection or server status.');
+        }
+      } else {
+        throw new Error('Unable to connect to Klouds server. Please verify network connection or server status.');
+      }
+    }
 
     if (response.status === 401) {
       clearAuthToken();

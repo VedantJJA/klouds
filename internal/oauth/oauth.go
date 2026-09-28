@@ -13,6 +13,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"os/exec"
 	"strings"
 	"time"
 )
@@ -661,12 +662,12 @@ func FetchRepositories(ctx context.Context, provider, token string, customAPIURL
 	}
 }
 
-// FetchBranches retrieves branch names for a repository.
-func FetchBranches(ctx context.Context, provider, token, owner, repo string, customAPIURL *string) ([]string, error) {
-	client := &http.Client{Timeout: 15 * time.Second}
+// FetchBranches retrieves branch names for a repository using provider API or git remote fallback.
+func FetchBranches(ctx context.Context, provider, token, owner, repo, repoURL string, customAPIURL *string) ([]string, error) {
+	client := &http.Client{Timeout: 10 * time.Second}
 
-	switch provider {
-	case "github":
+	// 1. Try Provider API if available
+	if provider == "github" && owner != "" && repo != "" {
 		apiBase := "https://api.github.com"
 		if customAPIURL != nil && *customAPIURL != "" {
 			apiBase = strings.TrimSuffix(*customAPIURL, "/")
@@ -674,35 +675,91 @@ func FetchBranches(ctx context.Context, provider, token, owner, repo string, cus
 
 		url := fmt.Sprintf("%s/repos/%s/%s/branches?per_page=100", apiBase, owner, repo)
 		req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
-		if err != nil {
-			return nil, err
+		if err == nil {
+			if token != "" {
+				req.Header.Set("Authorization", "Bearer "+token)
+			}
+			resp, err := client.Do(req)
+			if err == nil && resp.StatusCode == http.StatusOK {
+				defer resp.Body.Close()
+				var branches []struct {
+					Name string `json:"name"`
+				}
+				if err := json.NewDecoder(resp.Body).Decode(&branches); err == nil && len(branches) > 0 {
+					names := make([]string, 0, len(branches))
+					for _, b := range branches {
+						names = append(names, b.Name)
+					}
+					return names, nil
+				}
+			}
 		}
-		if token != "" {
-			req.Header.Set("Authorization", "Bearer "+token)
+	} else if provider == "gitlab" && owner != "" && repo != "" {
+		apiBase := "https://gitlab.com/api/v4"
+		if customAPIURL != nil && *customAPIURL != "" {
+			apiBase = strings.TrimSuffix(*customAPIURL, "/")
 		}
 
-		resp, err := client.Do(req)
-		if err != nil {
-			return nil, err
+		projectPath := url.PathEscape(owner + "/" + repo)
+		url := fmt.Sprintf("%s/projects/%s/repository/branches?per_page=100", apiBase, projectPath)
+		req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
+		if err == nil {
+			if token != "" {
+				req.Header.Set("PRIVATE-TOKEN", token)
+			}
+			resp, err := client.Do(req)
+			if err == nil && resp.StatusCode == http.StatusOK {
+				defer resp.Body.Close()
+				var branches []struct {
+					Name string `json:"name"`
+				}
+				if err := json.NewDecoder(resp.Body).Decode(&branches); err == nil && len(branches) > 0 {
+					names := make([]string, 0, len(branches))
+					for _, b := range branches {
+						names = append(names, b.Name)
+					}
+					return names, nil
+				}
+			}
 		}
-		defer resp.Body.Close()
-
-		var branches []struct {
-			Name string `json:"name"`
-		}
-		if err := json.NewDecoder(resp.Body).Decode(&branches); err != nil {
-			return nil, err
-		}
-
-		names := make([]string, 0, len(branches))
-		for _, b := range branches {
-			names = append(names, b.Name)
-		}
-		return names, nil
-
-	default:
-		return []string{"main", "master"}, nil
 	}
+
+	// 2. Fallback: query remote branches using git ls-remote directly
+	if repoURL != "" {
+		targetURL := repoURL
+		if token != "" && strings.HasPrefix(targetURL, "https://") {
+			if provider == "github" {
+				targetURL = strings.Replace(targetURL, "https://", fmt.Sprintf("https://x-access-token:%s@", token), 1)
+			} else if provider == "gitlab" {
+				targetURL = strings.Replace(targetURL, "https://", fmt.Sprintf("https://oauth2:%s@", token), 1)
+			}
+		}
+
+		cmdCtx, cancel := context.WithTimeout(ctx, 8*time.Second)
+		defer cancel()
+		cmd := exec.CommandContext(cmdCtx, "git", "ls-remote", "--heads", targetURL)
+		out, err := cmd.Output()
+		if err == nil {
+			lines := strings.Split(string(out), "\n")
+			var names []string
+			for _, line := range lines {
+				line = strings.TrimSpace(line)
+				if line == "" {
+					continue
+				}
+				parts := strings.Fields(line)
+				if len(parts) >= 2 {
+					branch := strings.TrimPrefix(parts[1], "refs/heads/")
+					names = append(names, branch)
+				}
+			}
+			if len(names) > 0 {
+				return names, nil
+			}
+		}
+	}
+
+	return []string{"main", "master"}, nil
 }
 
 func fetchGitHubPrimaryEmail(ctx context.Context, client *http.Client, apiBase, token string) string {

@@ -200,11 +200,6 @@
     </div>
 
     <div class="flex items-center gap-2">
-      <button class="btn btn-secondary btn-sm" onclick={() => showBlueprintModal = true}>
-        <Layers size={14} />
-        <span>Deploy Blueprint</span>
-      </button>
-
       <button class="btn btn-secondary btn-sm" onclick={() => showDbModal = true}>
         <DatabaseIcon size={14} />
         <span>New Database</span>
@@ -256,14 +251,10 @@
         </div>
         <h3>No Services Deployed</h3>
         <p class="text-sm text-muted mb-4">Deploy multiple services from a single GitHub repo or deploy a single app.</p>
-        <div class="flex gap-2">
-          <button class="btn btn-secondary btn-sm" onclick={() => showBlueprintModal = true}>
-            <Layers size={14} />
-            <span>Deploy Blueprint / Monorepo</span>
-          </button>
-          <a href={`/projects/${projectId}/services/new`} class="btn btn-primary btn-sm">
-            <Plus size={14} />
-            <span>Deploy Single Service</span>
+        <div class="flex justify-center">
+          <a href={`/projects/${projectId}/services/new`} class="btn btn-primary">
+            <Plus size={15} />
+            <span>Deploy Service</span>
           </a>
         </div>
       </div>

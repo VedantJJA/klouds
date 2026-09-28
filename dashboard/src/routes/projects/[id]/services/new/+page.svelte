@@ -7,44 +7,41 @@
     type Project,
     type Database,
     type GitRepo,
-    type RouteRule
+    type BatchCreateRequest,
+    type BatchCreateServiceItem
   } from '$lib/api/client';
   import Breadcrumbs from '$lib/components/common/Breadcrumbs.svelte';
   import {
-    Server,
     GitBranch,
-    FolderKanban,
-    Cpu,
-    Key,
-    Globe,
-    Rocket,
-    Check,
-    ArrowRight,
-    ArrowLeft,
+    Server,
+    Layers,
+    Code,
+    Settings,
     Plus,
     Trash2,
-    ArrowUp,
-    ArrowDown,
-    Database as DatabaseIcon,
+    Check,
     AlertCircle,
-    Eye,
-    EyeOff,
-    Search,
-    Layers,
-    Lock,
+    ArrowRight,
+    ArrowLeft,
+    Sparkles,
     ExternalLink,
-    Code,
-    Terminal,
-    RefreshCw
+    Lock,
+    Search,
+    RefreshCw,
+    Globe,
+    Cpu,
+    Database as DatabaseIcon,
+    ChevronDown
   } from '@lucide/svelte';
 
-  const projectId = $derived($page.params.id || '');
+  const projectId = $page.params.id;
 
+  // Project data
   let project = $state<Project | null>(null);
   let projectDatabases = $state<Database[]>([]);
   let loadingProject = $state(true);
 
-  // Git Repositories from Connected Accounts
+  // Git Repositories from connected accounts
   let gitRepos = $state<GitRepo[]>([]);
   let connectedProviders = $state<string[]>([]);
   let loadingRepos = $state(false);
@@ -53,14 +50,13 @@
   let availableBranches = $state<string[]>(['main', 'master']);
   let loadingBranches = $state(false);
 
-  // Multi-Service Architecture
+  // Service Draft model
   interface ServiceDraft {
-    id: string;
     name: string;
-    type: 'frontend' | 'web' | 'worker' | 'cron';
-    build_method: 'nixpacks' | 'dockerfile' | 'static' | 'image';
-    runtime_language: 'nodejs' | 'python' | 'go' | 'rust' | 'php' | 'ruby' | 'java' | 'static' | 'dockerfile';
+    type: 'web' | 'frontend' | 'worker' | 'cron';
+    runtime_language: string;
     runtime_version: string;
+    use_custom_version: boolean;
     custom_runtime_version: string;
     repo_url: string;
     branch: string;
@@ -71,22 +67,18 @@
     port: number;
     health_check_path: string;
     auto_deploy: boolean;
-    subdomain: string;
     env_list: Array<{ key: string; value: string; isSecret: boolean }>;
     raw_env: string;
     env_mode: 'form' | 'raw';
-    route_rules: RouteRule[];
   }
 
-  function createDefaultService(name = 'web-frontend', type: 'frontend' | 'web' | 'worker' | 'cron' = 'frontend'): ServiceDraft {
-    const slug = name.toLowerCase().replace(/[^a-z0-9]+/g, '-');
+  function createDefaultService(name = 'web-app', type: 'web' | 'frontend' | 'worker' | 'cron' = 'frontend'): ServiceDraft {
     return {
-      id: Math.random().toString(36).substring(2, 9),
       name,
       type,
-      build_method: 'nixpacks',
-      runtime_language: 'nodejs',
-      runtime_version: '20',
+      runtime_language: type === 'frontend' ? 'static' : 'nodejs',
+      runtime_version: type === 'frontend' ? 'latest' : '20',
+      use_custom_version: false,
       custom_runtime_version: '',
       repo_url: '',
       branch: 'main',
@@ -97,13 +89,9 @@
       port: type === 'frontend' ? 80 : 3000,
       health_check_path: '/health',
       auto_deploy: true,
-      subdomain: slug + '-' + Math.random().toString(36).substring(2, 6),
       env_list: [{ key: 'NODE_ENV', value: 'production', isSecret: false }],
       raw_env: 'NODE_ENV=production\n',
-      env_mode: 'form',
-      route_rules: type === 'frontend' ? [
-        { type: 'rewrite', source: '/*', target: '/index.html', status: 200 }
-      ] : []
+      env_mode: 'form'
     };
   }
 
@@ -111,49 +99,43 @@
   let activeServiceIdx = $state(0);
   let activeService = $derived(services[activeServiceIdx] || services[0]);
 
-  // Stepper state
+  // Stepper state: 4 focused steps
   let currentStep = $state<number>(1);
+  const steps = [
+    { number: 1, label: 'Source', desc: 'Git repository & branch' },
+    { number: 2, label: 'Build & Runtime', desc: 'Engine & version' },
+    { number: 3, label: 'Environment', desc: 'Variables & secrets' },
+    { number: 4, label: 'Review & Deploy', desc: 'Launch multi-service' }
+  ];
 
-  // Dynamic Steps based on active service type
-  let dynamicSteps = $derived.by(() => {
-    const t = activeService?.type || 'frontend';
-    if (t === 'frontend') {
-      return [
-        { number: 1, label: 'Source', desc: 'Git repository or image' },
-        { number: 2, label: 'Build & Runtime', desc: 'Language, version & commands' },
-        { number: 3, label: 'Environment', desc: 'Secrets & env vars' },
-        { number: 4, label: 'Edge Routing', desc: 'Subdomain & rewrite rules' },
-        { number: 5, label: 'Review & Deploy', desc: 'Launch multi-service' }
-      ];
-    } else if (t === 'web') {
-      return [
-        { number: 1, label: 'Source', desc: 'Git repository or image' },
-        { number: 2, label: 'Build & Runtime', desc: 'Language, version & commands' },
-        { number: 3, label: 'Environment', desc: 'Secrets & env vars' },
-        { number: 4, label: 'Networking', desc: 'Port & public domain' },
-        { number: 5, label: 'Review & Deploy', desc: 'Launch multi-service' }
-      ];
-    } else {
-      // Worker or Cron (no public HTTP routing required)
-      return [
-        { number: 1, label: 'Source', desc: 'Git repository or image' },
-        { number: 2, label: 'Build & Runtime', desc: 'Language, version & commands' },
-        { number: 3, label: 'Environment', desc: 'Secrets & env vars' },
-        { number: 4, label: 'Review & Deploy', desc: 'Launch multi-service' }
-      ];
-    }
-  });
+  // Allowed engines mapped strictly to service types
+  const allowedEnginesByType: Record<string, string[]> = {
+    frontend: ['static', 'nodejs', 'dockerfile'],
+    web: ['nodejs', 'python', 'go', 'rust', 'php', 'ruby', 'java', 'dockerfile'],
+    worker: ['nodejs', 'python', 'go', 'rust', 'php', 'ruby', 'java', 'dockerfile'],
+    cron: ['nodejs', 'python', 'go', 'rust', 'php', 'ruby', 'java', 'dockerfile']
+  };
 
-  // Runtime version definitions
-  const runtimeOptions: Record<string, { label: string; versions: Array<{ val: string; name: string }>; defaultPort: number }> = {
+  // Render-style version environment variable keys
+  const runtimeEnvVarKey: Record<string, string> = {
+    nodejs: 'NODE_VERSION',
+    python: 'PYTHON_VERSION',
+    go: 'GO_VERSION',
+    rust: 'RUST_VERSION',
+    php: 'PHP_VERSION',
+    ruby: 'RUBY_VERSION',
+    java: 'JAVA_VERSION'
+  };
+
+  // Runtime engine definitions & version choices
+  const runtimeOptions: Record<string, { label: string; defaultPort: number; versions: Array<{ val: string; name: string }> }> = {
     nodejs: {
       label: 'Node.js',
       defaultPort: 3000,
       versions: [
-        { val: '22', name: 'Node.js 22 LTS (Latest)' },
+        { val: '22', name: 'Node.js 22 Current' },
         { val: '20', name: 'Node.js 20 LTS (Recommended)' },
-        { val: '18', name: 'Node.js 18 LTS' },
-        { val: 'custom', name: 'Custom Version...' }
+        { val: '18', name: 'Node.js 18 LTS' }
       ]
     },
     python: {
@@ -163,8 +145,7 @@
         { val: '3.12', name: 'Python 3.12 (Latest)' },
         { val: '3.11', name: 'Python 3.11 (Recommended)' },
         { val: '3.10', name: 'Python 3.10' },
-        { val: '3.9', name: 'Python 3.9' },
-        { val: 'custom', name: 'Custom Version...' }
+        { val: '3.9', name: 'Python 3.9' }
       ]
     },
     go: {
@@ -173,17 +154,16 @@
       versions: [
         { val: '1.23', name: 'Go 1.23 (Latest)' },
         { val: '1.22', name: 'Go 1.22 (Recommended)' },
-        { val: '1.21', name: 'Go 1.21' },
-        { val: 'custom', name: 'Custom Version...' }
+        { val: '1.21', name: 'Go 1.21' }
       ]
     },
     rust: {
       label: 'Rust',
       defaultPort: 8080,
       versions: [
+        { val: '1.81', name: 'Rust 1.81 (Latest)' },
         { val: '1.80', name: 'Rust 1.80' },
-        { val: '1.79', name: 'Rust 1.79' },
-        { val: 'custom', name: 'Custom Version...' }
+        { val: '1.79', name: 'Rust 1.79' }
       ]
     },
     php: {
@@ -192,8 +172,7 @@
       versions: [
         { val: '8.3', name: 'PHP 8.3 (Latest)' },
         { val: '8.2', name: 'PHP 8.2 (Recommended)' },
-        { val: '8.1', name: 'PHP 8.1' },
-        { val: 'custom', name: 'Custom Version...' }
+        { val: '8.1', name: 'PHP 8.1' }
       ]
     },
     ruby: {
@@ -201,8 +180,7 @@
       defaultPort: 3000,
       versions: [
         { val: '3.3', name: 'Ruby 3.3 (Latest)' },
-        { val: '3.2', name: 'Ruby 3.2' },
-        { val: 'custom', name: 'Custom Version...' }
+        { val: '3.2', name: 'Ruby 3.2' }
       ]
     },
     java: {
@@ -211,8 +189,7 @@
       versions: [
         { val: '21', name: 'Java 21 LTS (Recommended)' },
         { val: '17', name: 'Java 17 LTS' },
-        { val: '11', name: 'Java 11 LTS' },
-        { val: 'custom', name: 'Custom Version...' }
+        { val: '11', name: 'Java 11 LTS' }
       ]
     },
     static: {
@@ -231,6 +208,37 @@
     }
   };
 
+  // Dynamic placeholders for build and run command
+  function getBuildCmdPlaceholder(lang: string): string {
+    switch (lang) {
+      case 'nodejs': return 'e.g. npm run build';
+      case 'python': return 'e.g. pip install -r requirements.txt';
+      case 'go': return 'e.g. go build -o server .';
+      case 'rust': return 'e.g. cargo build --release';
+      case 'php': return 'e.g. composer install --no-dev';
+      case 'ruby': return 'e.g. bundle install';
+      case 'java': return 'e.g. mvn clean package -DskipTests';
+      case 'static': return 'e.g. npm run build (optional for static assets)';
+      case 'dockerfile': return '(handled automatically by Dockerfile)';
+      default: return 'Build command';
+    }
+  }
+
+  function getStartCmdPlaceholder(lang: string): string {
+    switch (lang) {
+      case 'nodejs': return 'e.g. npm start (or node index.js)';
+      case 'python': return 'e.g. python main.py (or gunicorn app:app)';
+      case 'go': return 'e.g. ./server';
+      case 'rust': return 'e.g. ./target/release/server';
+      case 'php': return 'e.g. php -S 0.0.0.0:80';
+      case 'ruby': return 'e.g. bundle exec rails server';
+      case 'java': return 'e.g. java -jar target/app.jar';
+      case 'static': return '(served automatically by high-speed web server)';
+      case 'dockerfile': return '(handled automatically by Dockerfile CMD/ENTRYPOINT)';
+      default: return 'Start command';
+    }
+  }
+
   // Filtered repositories based on search and provider filter
   let filteredRepos = $derived.by(() => {
     let list = gitRepos;
@@ -244,6 +252,11 @@
     return list;
   });
 
+  // Auto-detect blueprint / components state
+  let isDetecting = $state(false);
+  let detectSuccessMsg = $state('');
+  let detectErrorMsg = $state('');
+
   // Deployment state
   let isDeploying = $state(false);
   let deployError = $state('');
@@ -253,18 +266,17 @@
     loadingProject = true;
     try {
       const [proj, dbs] = await Promise.all([
-        api.getProject(projectId),
-        api.listDatabases(projectId)
+        api.getProject(projectId).catch(() => null),
+        api.listDatabases(projectId).catch(() => [])
       ]);
       project = proj;
       projectDatabases = dbs || [];
-    } catch (err: any) {
-      deployError = err.message || 'Failed to load project details';
+    } catch {
+      // Non-blocking initialization
     } finally {
       loadingProject = false;
     }
 
-    // Load auto-aggregated repositories across all connected git accounts
     await loadGitRepositories();
   });
 
@@ -282,28 +294,51 @@
     }
   }
 
-  async function handleSelectRepo(repo: GitRepo) {
-    // Update all services in batch with this repository URL
-    for (const svc of services) {
-      svc.repo_url = repo.clone_url;
-      svc.branch = repo.default_branch || 'main';
+  let branchDebounceTimer: any = null;
+  function handleRepoUrlInput(e: Event) {
+    const val = (e.target as HTMLInputElement).value;
+    for (const s of services) {
+      s.repo_url = val;
     }
-
-    // Auto-update first service name if generic
-    if (services.length === 1 && (services[0].name === 'web-app' || services[0].name === 'web-frontend')) {
-      services[0].name = repo.name;
-      services[0].subdomain = repo.name.toLowerCase().replace(/[^a-z0-9]+/g, '-') + '-' + Math.random().toString(36).substring(2, 6);
+    clearTimeout(branchDebounceTimer);
+    if (val.trim().length > 10) {
+      branchDebounceTimer = setTimeout(() => {
+        fetchBranchesForUrl(val.trim());
+      }, 500);
     }
+  }
 
-    // Fetch branches for this repository
+  async function fetchBranchesForUrl(url: string) {
+    if (!url) return;
     loadingBranches = true;
     try {
-      availableBranches = await api.getGitBranches(repo.clone_url);
+      const branches = await api.getGitBranches(url);
+      if (branches && branches.length > 0) {
+        availableBranches = branches;
+        for (const s of services) {
+          if (!availableBranches.includes(s.branch)) {
+            s.branch = availableBranches[0] || 'main';
+          }
+        }
+      }
     } catch {
       availableBranches = ['main', 'master'];
     } finally {
       loadingBranches = false;
     }
+  }
+
+  async function handleSelectRepo(repo: GitRepo) {
+    for (const svc of services) {
+      svc.repo_url = repo.clone_url;
+      svc.branch = repo.default_branch || 'main';
+    }
+
+    if (services.length === 1 && (services[0].name === 'web-app' || services[0].name === 'web-frontend')) {
+      services[0].name = repo.name;
+    }
+
+    await fetchBranchesForUrl(repo.clone_url);
   }
 
   function addServiceTab() {
@@ -329,42 +364,166 @@
     }
   }
 
-  function handleLanguageChange(lang: any) {
-    activeService.runtime_language = lang;
-    const info = runtimeOptions[lang];
-    if (info) {
-      activeService.runtime_version = info.versions[0]?.val || '';
-      activeService.port = info.defaultPort;
-      if (lang === 'static') {
-        activeService.type = 'frontend';
-      }
+  function handleServiceTypeChange(newType: 'web' | 'frontend' | 'worker' | 'cron') {
+    activeService.type = newType;
+    const allowed = allowedEnginesByType[newType] || allowedEnginesByType.web;
+    if (!allowed.includes(activeService.runtime_language)) {
+      handleLanguageChange(allowed[0]);
+    }
+    if (newType === 'frontend' && activeService.port === 3000) {
+      activeService.port = 80;
+    } else if (newType === 'web' && activeService.port === 80) {
+      activeService.port = 3000;
     }
   }
 
-  function syncEnvToRaw(svc: ServiceDraft) {
-    svc.raw_env = svc.env_list.map(e => `${e.key}=${e.value}`).join('\n');
+  function handleLanguageChange(langKey: string) {
+    activeService.runtime_language = langKey;
+    const opt = runtimeOptions[langKey];
+    if (opt) {
+      activeService.port = opt.defaultPort;
+      activeService.runtime_version = opt.versions[0]?.val || '';
+    }
+    if (activeService.use_custom_version) {
+      syncCustomVersionToEnv(activeService);
+    }
   }
 
-  function syncRawToEnv(svc: ServiceDraft) {
-    const lines = svc.raw_env.split('\n');
-    const parsed: Array<{ key: string; value: string; isSecret: boolean }> = [];
-    for (const line of lines) {
-      const trimmed = line.trim();
-      if (!trimmed || trimmed.startsWith('#')) continue;
-      const eqIdx = trimmed.indexOf('=');
-      if (eqIdx > 0) {
-        const key = trimmed.slice(0, eqIdx).trim();
-        let val = trimmed.slice(eqIdx + 1).trim();
-        if ((val.startsWith('"') && val.endsWith('"')) || (val.startsWith("'") && val.endsWith("'"))) {
-          val = val.slice(1, -1);
+  function toggleCustomVersion(svc: ServiceDraft) {
+    svc.use_custom_version = !svc.use_custom_version;
+    if (svc.use_custom_version) {
+      if (!svc.custom_runtime_version) {
+        svc.custom_runtime_version = svc.runtime_version;
+      }
+      syncCustomVersionToEnv(svc);
+    }
+  }
+
+  function handleCustomVersionChange(svc: ServiceDraft, val: string) {
+    svc.custom_runtime_version = val;
+    svc.runtime_version = val;
+    syncCustomVersionToEnv(svc);
+  }
+
+  function syncCustomVersionToEnv(svc: ServiceDraft) {
+    const envKey = runtimeEnvVarKey[svc.runtime_language];
+    if (!envKey) return;
+    const val = svc.custom_runtime_version || svc.runtime_version || '';
+    const existing = svc.env_list.find(e => e.key === envKey);
+    if (existing) {
+      existing.value = val;
+    } else {
+      svc.env_list.push({ key: envKey, value: val, isSecret: false });
+    }
+    syncEnvToRaw(svc);
+  }
+
+  async function handleAutoDetect() {
+    if (!activeService.repo_url || !projectId) {
+      detectErrorMsg = 'Please provide or pick a Git repository URL first.';
+      return;
+    }
+
+    isDetecting = true;
+    detectSuccessMsg = '';
+    detectErrorMsg = '';
+
+    try {
+      const res = await api.detectBlueprint(projectId, activeService.repo_url, activeService.branch);
+      if (res && res.blueprint && res.blueprint.services && res.blueprint.services.length > 0) {
+        const detectedDrafts: ServiceDraft[] = res.blueprint.services.map((svc, idx) => {
+          let lang = 'nodejs';
+          const bm = (svc.build_method || '').toLowerCase();
+          const rd = (svc.root_dir || '').toLowerCase();
+          if (bm === 'dockerfile') lang = 'dockerfile';
+          else if (rd.includes('python') || rd.includes('backend') || rd.includes('py')) lang = 'python';
+          else if (rd.includes('go')) lang = 'go';
+          else if (svc.type === 'frontend') lang = 'static';
+
+          return {
+            name: svc.name || `service-${idx + 1}`,
+            type: (svc.type as any) || (idx === 0 ? 'frontend' : 'web'),
+            runtime_language: lang,
+            runtime_version: '',
+            use_custom_version: false,
+            custom_runtime_version: '',
+            repo_url: activeService.repo_url,
+            branch: res.detected_branch || activeService.branch || 'main',
+            root_dir: svc.root_dir || '.',
+            dockerfile_path: 'Dockerfile',
+            build_command: svc.build_command || '',
+            start_command: svc.start_command || '',
+            port: svc.port || (svc.type === 'frontend' ? 80 : 3000),
+            health_check_path: '/health',
+            auto_deploy: true,
+            env_list: Object.entries(svc.env_vars || {}).map(([key, value]) => ({ key, value, isSecret: false })),
+            raw_env: Object.entries(svc.env_vars || {}).map(([k, v]) => `${k}=${v}`).join('\n') + '\n',
+            env_mode: 'form'
+          };
+        });
+
+        services = detectedDrafts;
+        activeServiceIdx = 0;
+        detectSuccessMsg = `Auto-detected ${detectedDrafts.length} service(s) from repository! Tabs have been populated.`;
+      } else {
+        detectSuccessMsg = 'Repository scanned. 1 service configured.';
+      }
+    } catch (err: any) {
+      detectErrorMsg = err.message || 'Auto-detection could not inspect repository structure.';
+    } finally {
+      isDetecting = false;
+    }
+  }
+
+  // Step Validation & Progression Gating
+  function isStepValid(stepNum: number): boolean {
+    if (stepNum === 1) {
+      return !!activeService.repo_url && activeService.repo_url.trim().length > 0;
+    }
+    if (stepNum === 2) {
+      if (!activeService.name || !activeService.name.trim()) return false;
+      if (activeService.use_custom_version && (!activeService.custom_runtime_version || !activeService.custom_runtime_version.trim())) {
+        return false;
+      }
+      return true;
+    }
+    return true;
+  }
+
+  function canNavigateToStep(targetStep: number): boolean {
+    if (targetStep <= currentStep) return true;
+    for (let s = 1; s < targetStep; s++) {
+      if (!isStepValid(s)) return false;
+    }
+    return true;
+  }
+
+  function goToStep(targetStep: number) {
+    if (canNavigateToStep(targetStep)) {
+      deployError = '';
+      currentStep = targetStep;
+    }
+  }
+
+  function handleNextStep() {
+    if (!isStepValid(currentStep)) {
+      if (currentStep === 1) {
+        deployError = 'Please choose or paste a Git repository URL before proceeding.';
+      } else if (currentStep === 2) {
+        if (!activeService.name || !activeService.name.trim()) {
+          deployError = 'Please provide a name for this service.';
+        } else if (activeService.use_custom_version && !activeService.custom_runtime_version.trim()) {
+          const envKey = runtimeEnvVarKey[activeService.runtime_language] || 'version';
+          deployError = `Please specify the custom version value for ${envKey} before continuing.`;
         }
-        const isSecret = key.toLowerCase().includes('secret') || key.toLowerCase().includes('pass') || key.toLowerCase().includes('key') || key.toLowerCase().includes('token');
-        parsed.push({ key, value: val, isSecret });
       }
+      return;
     }
-    svc.env_list = parsed;
+    deployError = '';
+    currentStep++;
   }
 
+  // Environment variables helpers
   function addEnvVar(svc: ServiceDraft) {
     svc.env_list.push({ key: '', value: '', isSecret: false });
     syncEnvToRaw(svc);
@@ -375,112 +534,117 @@
     syncEnvToRaw(svc);
   }
 
+  function syncEnvToRaw(svc: ServiceDraft) {
+    svc.raw_env = svc.env_list
+      .filter(item => item.key.trim())
+      .map(item => `${item.key}=${item.value}`)
+      .join('\n') + (svc.env_list.length ? '\n' : '');
+  }
+
+  function syncRawToEnv(svc: ServiceDraft) {
+    const lines = svc.raw_env.split('\n');
+    const list: Array<{ key: string; value: string; isSecret: boolean }> = [];
+    for (const line of lines) {
+      const trimmed = line.trim();
+      if (!trimmed || trimmed.startsWith('#')) continue;
+      const idx = trimmed.indexOf('=');
+      if (idx !== -1) {
+        list.push({
+          key: trimmed.substring(0, idx).trim(),
+          value: trimmed.substring(idx + 1).trim(),
+          isSecret: false
+        });
+      }
+    }
+    svc.env_list = list;
+  }
+
   function injectDbEnv(svc: ServiceDraft, db: Database) {
-    const prefix = db.engine === 'redis' ? 'REDIS_URL' : 'DATABASE_URL';
-    const connStr = `${db.engine}://${db.username}:[PASSWORD]@${db.internal_host}:${db.internal_port}/${db.database_name}`;
-    const exists = svc.env_list.some(e => e.key === prefix);
-    if (!exists) {
-      svc.env_list.push({ key: prefix, value: connStr, isSecret: true });
-      syncEnvToRaw(svc);
+    const prefix = db.engine.toUpperCase();
+    const uriKey = `${prefix}_URL`;
+    const hostKey = `${prefix}_HOST`;
+    const portKey = `${prefix}_PORT`;
+    const userKey = `${prefix}_USER`;
+    const passKey = `${prefix}_PASSWORD`;
+    const nameKey = `${prefix}_DB`;
+
+    const keysToAdd = [
+      { key: uriKey, value: `${db.engine}://${db.user}:${db.password}@${db.host}:${db.port}/${db.db_name}` },
+      { key: hostKey, value: db.host },
+      { key: portKey, value: String(db.port) },
+      { key: userKey, value: db.user },
+      { key: passKey, value: db.password },
+      { key: nameKey, value: db.db_name }
+    ];
+
+    for (const item of keysToAdd) {
+      const exists = svc.env_list.some(e => e.key === item.key);
+      if (!exists) {
+        svc.env_list.push({ ...item, isSecret: item.key.includes('PASS') || item.key.includes('URL') });
+      }
     }
+    syncEnvToRaw(svc);
   }
 
-  // Rewrite / Redirect Rules for Frontend apps
-  function addRouteRule(svc: ServiceDraft, type: 'redirect' | 'rewrite' = 'rewrite') {
-    svc.route_rules.push({
-      type,
-      source: '',
-      target: '',
-      status: type === 'rewrite' ? 200 : 301
-    });
+  function slugify(text: string): string {
+    return text.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '') || 'service';
   }
 
-  function removeRouteRule(svc: ServiceDraft, idx: number) {
-    svc.route_rules.splice(idx, 1);
-  }
-
-  function moveRuleUp(svc: ServiceDraft, idx: number) {
-    if (idx <= 0) return;
-    const rule = svc.route_rules.splice(idx, 1)[0];
-    svc.route_rules.splice(idx - 1, 0, rule);
-  }
-
-  function moveRuleDown(svc: ServiceDraft, idx: number) {
-    if (idx >= svc.route_rules.length - 1) return;
-    const rule = svc.route_rules.splice(idx, 1)[0];
-    svc.route_rules.splice(idx + 1, 0, rule);
-  }
-
-  function handleNextStep() {
-    if (currentStep < dynamicSteps.length) {
-      currentStep++;
-    }
-  }
-
-  function handlePrevStep() {
-    if (currentStep > 1) {
-      currentStep--;
-    }
-  }
-
-  async function handleLaunchBatch() {
+  // Batch Deployment
+  async function handleDeployAll() {
     isDeploying = true;
     deployError = '';
+    deployedServices = [];
 
-    const batchPayload = services.map(svc => {
-      // Collect environment variables
+    const items: BatchCreateServiceItem[] = services.map(svc => {
       const envMap: Record<string, string> = {};
-      for (const e of svc.env_list) {
-        if (e.key.trim()) {
-          envMap[e.key.trim()] = e.value;
+      for (const item of svc.env_list) {
+        if (item.key.trim()) {
+          envMap[item.key.trim()] = item.value;
         }
       }
 
-      // Determine final runtime version
-      let effectiveVersion = svc.runtime_version;
-      if (svc.runtime_version === 'custom' && svc.custom_runtime_version.trim()) {
-        effectiveVersion = svc.custom_runtime_version.trim();
+      // Final Render-style env var verification
+      const rKey = runtimeEnvVarKey[svc.runtime_language];
+      if (rKey && svc.use_custom_version && svc.custom_runtime_version) {
+        envMap[rKey] = svc.custom_runtime_version.trim();
       }
 
       return {
-        name: svc.name,
+        name: svc.name.trim(),
         type: svc.type,
-        build_method: svc.build_method,
-        repo_url: svc.repo_url || undefined,
-        branch: svc.branch || 'main',
-        root_dir: svc.root_dir || '.',
-        dockerfile_path: svc.dockerfile_path || 'Dockerfile',
-        build_command: svc.build_command || undefined,
-        start_command: svc.start_command || undefined,
-        port: Number(svc.port) || 3000,
-        health_check_path: svc.health_check_path || undefined,
+        build_method: svc.runtime_language === 'dockerfile' ? 'dockerfile' : 'nixpacks',
+        repo_url: svc.repo_url.trim() || undefined,
+        branch: svc.branch.trim() || undefined,
+        root_dir: svc.root_dir.trim() || '.',
+        dockerfile_path: svc.runtime_language === 'dockerfile' ? svc.dockerfile_path.trim() : undefined,
+        build_command: svc.build_command.trim() || undefined,
+        start_command: svc.start_command.trim() || undefined,
+        port: Number(svc.port) || (svc.type === 'frontend' ? 80 : 3000),
+        health_check_path: svc.health_check_path.trim() || '/health',
         auto_deploy: svc.auto_deploy,
-        runtime_version: effectiveVersion,
-        subdomain: svc.subdomain,
-        env_vars: envMap,
-        route_rules: svc.type === 'frontend' ? svc.route_rules : []
+        runtime_version: svc.use_custom_version ? svc.custom_runtime_version.trim() : svc.runtime_version,
+        env_vars: envMap
       };
     });
 
     try {
       const res = await api.createBatchServices({
         project_id: projectId,
-        services: batchPayload,
-        deploy: true
+        services: items
       });
 
       deployedServices = res.services.map(s => ({
         name: s.name,
         id: s.id,
-        status: 'Building & Deploying'
+        status: s.status
       }));
 
-      // Redirect back to project page after launching
       setTimeout(() => {
         goto(`/projects/${projectId}`);
-      }, 1800);
+      }, 1500);
     } catch (err: any) {
-      deployError = err.message || 'Failed to deploy services';
+      deployError = err.message || 'Batch deployment failed. Please check parameters and try again.';
       isDeploying = false;
     }
   }
@@ -491,15 +655,15 @@
     items={[
       { label: 'Projects', href: '/projects' },
       { label: project?.name || 'Project', href: `/projects/${projectId}` },
-      { label: 'Deploy Services', href: `/projects/${projectId}/services/new` }
+      { label: 'Deploy Service', href: `/projects/${projectId}/services/new` }
     ]}
   />
 
-  <div class="header-section">
+  <div class="page-header">
     <div>
-      <h1 class="page-title">Deploy Services</h1>
+      <h1 class="page-title">Deploy Service</h1>
       <p class="page-subtitle">
-        Host single or multiple services from your Git repositories with automated edge routing and custom runtimes.
+        Host single or multiple services from your Git repositories with automated runtime detection.
       </p>
     </div>
   </div>
@@ -508,6 +672,20 @@
     <div class="alert alert-danger">
       <AlertCircle size={18} />
       <span>{deployError}</span>
+    </div>
+  {/if}
+
+  {#if detectSuccessMsg}
+    <div class="alert alert-success">
+      <Check size={18} />
+      <span>{detectSuccessMsg}</span>
+    </div>
+  {/if}
+
+  {#if detectErrorMsg}
+    <div class="alert alert-danger">
+      <AlertCircle size={18} />
+      <span>{detectErrorMsg}</span>
     </div>
   {/if}
 
@@ -540,53 +718,63 @@
     </div>
 
     <button type="button" class="btn btn-secondary btn-sm" onclick={addServiceTab}>
-      <Plus size={15} />
+      <Plus size={14} />
       <span>Add Another Service</span>
     </button>
   </div>
 
-  <!-- STEP PROGRESS TRACKER -->
+  <!-- 4-STEP STREAMLINED STEPPER -->
   <div class="stepper-container">
-    {#each dynamicSteps as step}
+    {#each steps as step}
       <button
         type="button"
         class="step-item {currentStep === step.number ? 'active' : ''} {currentStep > step.number ? 'completed' : ''}"
-        onclick={() => currentStep = step.number}
+        disabled={!canNavigateToStep(step.number)}
+        onclick={() => goToStep(step.number)}
       >
-        <div class="step-circle">
+        <div class="step-num">
           {#if currentStep > step.number}
             <Check size={14} />
           {:else}
             {step.number}
           {/if}
         </div>
-        <div class="step-text">
-          <span class="step-label">{step.label}</span>
-          <span class="step-desc">{step.desc}</span>
+        <div class="step-meta">
+          <div class="step-label">{step.label}</div>
+          <div class="step-desc">{step.desc}</div>
         </div>
       </button>
     {/each}
   </div>
 
   <!-- STEP CONTENT -->
-  <div class="step-card">
-    <!-- ========================================== -->
-    <!-- STEP 1: SOURCE (AUTO-REPOSITORIES & GIT)   -->
-    <!-- ========================================== -->
+  <div class="wizard-card card">
     {#if currentStep === 1}
+      <!-- STEP 1: SOURCE -->
       <div class="step-pane">
         <div class="pane-header">
-          <h2>Select Repository or Source</h2>
-          <p class="pane-subtitle">
+          <h3>Select Repository or Source</h3>
+          <p class="text-sm text-muted">
             Choose from your connected GitHub, GitLab, or Bitbucket accounts, or enter a custom Git URL.
           </p>
         </div>
 
-        {#if connectedProviders.length > 0}
-          <div class="auto-repo-picker">
-            <div class="repo-filter-row">
+        {#if connectedProviders.length === 0}
+          <div class="connect-banner">
+            <div class="connect-banner-content">
+              <h4>Connect your Git Accounts</h4>
+              <p class="text-sm text-muted">Authorize GitHub, GitLab, or Bitbucket in settings so all your repositories appear here automatically.</p>
+            </div>
+            <a href="/settings" class="btn btn-secondary btn-sm">
+              <GitBranch size={14} />
+              <span>Connect Accounts</span>
+            </a>
+          </div>
+        {:else}
+          <div class="connected-repos-section">
+            <div class="repos-filter-bar">
               <div class="search-box">
-                <Search size={16} class="search-icon" />
+                <Search size={15} class="search-icon" />
                 <input
                   type="text"
                   class="form-input search-input"
@@ -640,36 +828,14 @@
                     {#if repo.description}
                       <p class="repo-card-desc">{repo.description}</p>
                     {/if}
-                    <div class="repo-card-bottom">
-                      <span class="branch-tag"><GitBranch size={12} /> {repo.default_branch || 'main'}</span>
-                      {#if activeService.repo_url === repo.clone_url}
-                        <span class="selected-mark"><Check size={14} /> Selected</span>
-                      {/if}
-                    </div>
                   </button>
                 {/each}
               </div>
-            {:else}
-              <div class="empty-repos">
-                <p>No matching repositories found.</p>
-              </div>
             {/if}
-          </div>
-        {:else}
-          <div class="no-oauth-banner">
-            <div class="no-oauth-content">
-              <h4>Connect your Git Accounts</h4>
-              <p>Authorize GitHub, GitLab, or Bitbucket in settings so all your repositories appear here automatically.</p>
-            </div>
-            <a href="/settings" class="btn btn-secondary btn-sm">
-              <Key size={15} />
-              <span>Connect Accounts</span>
-            </a>
           </div>
         {/if}
 
-        <div class="manual-git-section">
-          <h3>Or Enter Repository Details Manually</h3>
+        <div class="manual-repo-section">
           <div class="form-grid-2">
             <div class="form-group">
               <label class="form-label" for="manual-repo-url">Git Repository URL</label>
@@ -678,47 +844,53 @@
                 type="text"
                 class="form-input"
                 placeholder="https://github.com/owner/repository.git"
-                bind:value={activeService.repo_url}
+                value={activeService.repo_url}
+                oninput={handleRepoUrlInput}
               />
+              <span class="form-hint">Public or private Git repository link</span>
             </div>
 
             <div class="form-group">
               <label class="form-label" for="manual-branch">
-                Branch
+                <span>Branch / Ref</span>
                 {#if loadingBranches}
-                  <span class="text-xs text-muted">(loading...)</span>
+                  <span class="detecting-badge"><RefreshCw size={11} class="spin" /> Detecting branches...</span>
                 {/if}
               </label>
-              <div class="branch-input-wrap">
-                {#if availableBranches.length > 1}
-                  <select id="manual-branch" class="form-select" bind:value={activeService.branch}>
-                    {#each availableBranches as b}
-                      <option value={b}>{b}</option>
-                    {/each}
-                  </select>
-                {:else}
-                  <input
-                    id="manual-branch"
-                    type="text"
-                    class="form-input"
-                    placeholder="main"
-                    bind:value={activeService.branch}
-                  />
-                {/if}
+              <div class="branch-select-wrap">
+                <select id="manual-branch" class="form-select" bind:value={activeService.branch}>
+                  {#each availableBranches as b}
+                    <option value={b}>{b}</option>
+                  {/each}
+                </select>
+                <ChevronDown size={14} class="select-chevron" />
               </div>
+              <span class="form-hint">Automatically detected from remote heads</span>
             </div>
+          </div>
+
+          <!-- AUTO-DETECT BUTTON -->
+          <div class="detect-action-row">
+            <button
+              type="button"
+              class="btn btn-secondary btn-sm"
+              disabled={!activeService.repo_url || isDetecting}
+              onclick={handleAutoDetect}
+            >
+              <Sparkles size={14} class={isDetecting ? 'spin' : ''} />
+              <span>{isDetecting ? 'Inspecting repository components...' : 'Auto-detect Services & Blueprint'}</span>
+            </button>
+            <span class="text-xs text-muted">Scans repo directories to auto-configure frontend & backend service tabs.</span>
           </div>
         </div>
       </div>
 
-    <!-- ========================================== -->
-    <!-- STEP 2: BUILD & RUNTIME (VERSION SELECTOR) -->
-    <!-- ========================================== -->
     {:else if currentStep === 2}
+      <!-- STEP 2: BUILD & RUNTIME -->
       <div class="step-pane">
         <div class="pane-header">
-          <h2>Build & Runtime Configuration</h2>
-          <p class="pane-subtitle">
+          <h3>Build & Runtime Configuration</h3>
+          <p class="text-sm text-muted">
             Configure the engine, language runtime version, root directory, and execution commands for <strong>{activeService.name}</strong>.
           </p>
         </div>
@@ -730,86 +902,127 @@
               id="svc-name"
               type="text"
               class="form-input"
-              placeholder="e.g. web-frontend"
+              placeholder="e.g. web-frontend or api-service"
               bind:value={activeService.name}
             />
           </div>
 
           <div class="form-group">
             <label class="form-label" for="svc-type">Service Type</label>
-            <select id="svc-type" class="form-select" bind:value={activeService.type}>
-              <option value="frontend">Frontend Web App (SPA / SSR / Rewrites supported)</option>
+            <select
+              id="svc-type"
+              class="form-select"
+              value={activeService.type}
+              onchange={(e) => handleServiceTypeChange((e.target as HTMLSelectElement).value as any)}
+            >
+              <option value="frontend">Static Site / Frontend App (SPA / HTML / Vite)</option>
               <option value="web">Web Service / Backend API (Public HTTP endpoint)</option>
-              <option value="worker">Background Worker (Continuous daemon, no HTTP)</option>
-              <option value="cron">Cron Job (Periodic execution)</option>
+              <option value="worker">Background Worker (Queue processor / internal job)</option>
+              <option value="cron">Scheduled Job (Cron trigger)</option>
             </select>
           </div>
         </div>
 
         <div class="section-divider"></div>
 
-        <!-- RUNTIME ENGINE & VERSION SELECTOR -->
+        <!-- RUNTIME ENGINE SELECTOR (FILTERED BY SERVICE TYPE) -->
         <div class="form-group">
-          <div class="form-label">Runtime / Build Engine</div>
+          <div class="form-label">Runtime / Build Engine (Applicable for {activeService.type.toUpperCase()})</div>
           <div class="engine-cards-grid">
-            {#each Object.entries(runtimeOptions) as [key, opt]}
-              <button
-                type="button"
-                class="engine-card {activeService.runtime_language === key ? 'selected' : ''}"
-                onclick={() => handleLanguageChange(key)}
-              >
-                <div class="engine-card-top">
-                  <Code size={16} />
-                  <span class="engine-name">{opt.label}</span>
-                </div>
-              </button>
+            {#each (allowedEnginesByType[activeService.type] || allowedEnginesByType.web) as key}
+              {@const opt = runtimeOptions[key]}
+              {#if opt}
+                <button
+                  type="button"
+                  class="engine-card {activeService.runtime_language === key ? 'selected' : ''}"
+                  onclick={() => handleLanguageChange(key)}
+                >
+                  <div class="engine-card-top">
+                    <Code size={15} />
+                    <span class="engine-name">{opt.label}</span>
+                  </div>
+                </button>
+              {/if}
             {/each}
           </div>
         </div>
 
-        <!-- RUNTIME VERSION SELECTOR -->
-        {#if runtimeOptions[activeService.runtime_language]?.versions.length > 0}
-          <div class="form-grid-2">
-            <div class="form-group">
-              <label class="form-label" for="runtime-ver">
-                Runtime Version
-                <span class="text-xs text-muted">({runtimeOptions[activeService.runtime_language].label})</span>
+        <!-- RENDER-STYLE RUNTIME VERSION SELECTOR -->
+        {#if runtimeOptions[activeService.runtime_language]?.versions.length > 0 && activeService.runtime_language !== 'dockerfile' && activeService.runtime_language !== 'static'}
+          <div class="version-section card p-3">
+            <div class="version-header">
+              <label class="form-label mb-0" for="runtime-ver">
+                Runtime Version ({runtimeOptions[activeService.runtime_language]?.label})
               </label>
-              <select id="runtime-ver" class="form-select" bind:value={activeService.runtime_version}>
-                {#each runtimeOptions[activeService.runtime_language].versions as ver}
+
+              <!-- CUSTOM VERSION CHECKBOX -->
+              <label class="custom-ver-checkbox">
+                <input
+                  type="checkbox"
+                  checked={activeService.use_custom_version}
+                  onchange={() => toggleCustomVersion(activeService)}
+                />
+                <span>Specify custom version via env variable (Render-style)</span>
+              </label>
+            </div>
+
+            {#if activeService.use_custom_version}
+              <div class="custom-ver-input-box mt-2">
+                <div class="flex items-center gap-2">
+                  <span class="font-mono text-xs badge badge-secondary">
+                    {runtimeEnvVarKey[activeService.runtime_language] || 'RUNTIME_VERSION'}
+                  </span>
+                  <input
+                    type="text"
+                    id="custom-ver"
+                    class="form-input font-mono text-sm"
+                    placeholder="e.g. 20.11.1, 3.11.8, 1.22.4"
+                    value={activeService.custom_runtime_version}
+                    oninput={(e) => handleCustomVersionChange(activeService, (e.target as HTMLInputElement).value)}
+                  />
+                </div>
+                <span class="form-hint">
+                  Automatically sets <code>{runtimeEnvVarKey[activeService.runtime_language]}</code> in the service environment. Re-deploying with an updated version immediately rebuilds with that runtime.
+                </span>
+              </div>
+            {:else}
+              <select id="runtime-ver" class="form-select mt-1" bind:value={activeService.runtime_version}>
+                {#each runtimeOptions[activeService.runtime_language]?.versions as ver}
                   <option value={ver.val}>{ver.name}</option>
                 {/each}
               </select>
-            </div>
-
-            {#if activeService.runtime_version === 'custom'}
-              <div class="form-group">
-                <label class="form-label" for="custom-ver">Custom Version Specification</label>
-                <input
-                  id="custom-ver"
-                  type="text"
-                  class="form-input"
-                  placeholder="e.g. 21.7.0 or 3.11.4"
-                  bind:value={activeService.custom_runtime_version}
-                />
-              </div>
-            {:else}
-              <div class="form-group">
-                <label class="form-label" for="root-dir">
-                  Root Directory
-                  <span class="text-xs text-muted">(Crucial for Monorepo / Multi-Service repos)</span>
-                </label>
-                <input
-                  id="root-dir"
-                  type="text"
-                  class="form-input"
-                  placeholder="e.g. client, frontend, or ."
-                  bind:value={activeService.root_dir}
-                />
-              </div>
             {/if}
           </div>
         {/if}
+
+        <div class="form-grid-2 mt-3">
+          <div class="form-group">
+            <label class="form-label" for="root-dir">
+              <span>Root Directory</span>
+              <span class="text-xs text-muted">(Subdirectory for monorepos)</span>
+            </label>
+            <input
+              id="root-dir"
+              type="text"
+              class="form-input font-mono"
+              placeholder="e.g. frontend, backend, or . for root"
+              bind:value={activeService.root_dir}
+            />
+          </div>
+
+          {#if activeService.type !== 'worker' && activeService.type !== 'cron'}
+            <div class="form-group">
+              <label class="form-label" for="svc-port">Internal Container Port</label>
+              <input
+                id="svc-port"
+                type="number"
+                class="form-input font-mono"
+                placeholder={String(runtimeOptions[activeService.runtime_language]?.defaultPort || 3000)}
+                bind:value={activeService.port}
+              />
+            </div>
+          {/if}
+        </div>
 
         <div class="form-grid-2">
           <div class="form-group">
@@ -817,8 +1030,8 @@
             <input
               id="build-cmd"
               type="text"
-              class="form-input font-mono"
-              placeholder="e.g. npm run build (Auto-detected if empty)"
+              class="form-input font-mono text-sm"
+              placeholder={getBuildCmdPlaceholder(activeService.runtime_language)}
               bind:value={activeService.build_command}
             />
           </div>
@@ -828,60 +1041,46 @@
             <input
               id="start-cmd"
               type="text"
-              class="form-input font-mono"
-              placeholder="e.g. npm start (Auto-detected if empty)"
+              class="form-input font-mono text-sm"
+              placeholder={getStartCmdPlaceholder(activeService.runtime_language)}
               bind:value={activeService.start_command}
             />
           </div>
         </div>
 
-        {#if activeService.type === 'frontend' || activeService.type === 'web'}
-          <div class="form-grid-2">
-            <div class="form-group">
-              <label class="form-label" for="svc-port">Internal Container Port</label>
-              <input
-                id="svc-port"
-                type="number"
-                class="form-input"
-                bind:value={activeService.port}
-              />
+        <!-- AUTO-ASSIGNED SUBDOMAIN BADGE (NO DIRECT USER OVERRIDE TO PREVENT CONFLICTS) -->
+        {#if activeService.type !== 'worker' && activeService.type !== 'cron'}
+          <div class="subdomain-preview-card mt-2">
+            <Globe size={15} />
+            <div class="subdomain-preview-text">
+              <span class="text-xs text-muted">Auto-assigned Public Subdomain:</span>
+              <strong class="font-mono text-sm">
+                {slugify(activeService.name || 'service')}.klouds.online
+              </strong>
             </div>
-
-            <div class="form-group">
-              <label class="form-label" for="hc-path">Health Check Path</label>
-              <input
-                id="hc-path"
-                type="text"
-                class="form-input"
-                placeholder="/health"
-                bind:value={activeService.health_check_path}
-              />
-            </div>
+            <span class="badge badge-secondary text-xs">Unique slug auto-allocated on deploy</span>
           </div>
         {/if}
       </div>
 
-    <!-- ========================================== -->
-    <!-- STEP 3: ENVIRONMENT VARIABLES              -->
-    <!-- ========================================== -->
     {:else if currentStep === 3}
+      <!-- STEP 3: ENVIRONMENT VARIABLES -->
       <div class="step-pane">
         <div class="pane-header">
-          <h2>Environment Variables & Secrets</h2>
-          <p class="pane-subtitle">
-            Define environment variables for <strong>{activeService.name}</strong>. Encrypted at rest using AES-256-GCM.
+          <h3>Environment Variables & Secrets</h3>
+          <p class="text-sm text-muted">
+            Set environment variables for <strong>{activeService.name}</strong>, or inject connections to managed databases with 1-click.
           </p>
         </div>
 
-        <!-- 1-Click Database Connection String Injection -->
         {#if projectDatabases.length > 0}
           <div class="db-inject-section">
-            <span class="db-inject-label"><DatabaseIcon size={14} /> Connect to Managed Database:</span>
+            <span class="text-xs text-muted">Inject Managed Database Credentials:</span>
             <div class="db-inject-buttons">
               {#each projectDatabases as db}
                 <button
                   type="button"
-                  class="btn btn-secondary btn-xs"
+                  class="btn btn-secondary btn-sm"
                   onclick={() => injectDbEnv(activeService, db)}
                 >
                   <Plus size={12} />
@@ -921,31 +1120,19 @@
                   oninput={() => syncEnvToRaw(activeService)}
                 />
                 <input
-                  type={item.isSecret ? 'password' : 'text'}
-                  class="form-input font-mono flex-1"
+                  type="text"
+                  class="form-input font-mono"
                   placeholder="VALUE"
                   bind:value={item.value}
                   oninput={() => syncEnvToRaw(activeService)}
                 />
                 <button
                   type="button"
-                  class="btn-icon"
-                  title={item.isSecret ? 'Reveal secret' : 'Mask secret'}
-                  onclick={() => item.isSecret = !item.isSecret}
-                >
-                  {#if item.isSecret}
-                    <EyeOff size={16} />
-                  {:else}
-                    <Eye size={16} />
-                  {/if}
-                </button>
-                <button
-                  type="button"
-                  class="btn-icon text-danger"
-                  title="Remove"
+                  class="btn btn-danger btn-sm"
+                  title="Remove variable"
                   onclick={() => removeEnvVar(activeService, idx)}
                 >
-                  <Trash2 size={16} />
+                  <Trash2 size={13} />
                 </button>
               </div>
             {/each}
@@ -956,11 +1143,11 @@
             </button>
           </div>
         {:else}
-          <div class="form-group">
+          <div class="raw-env-wrap">
             <textarea
               class="form-textarea font-mono"
               rows={8}
-              placeholder="KEY=VALUE&#10;PORT=3000&#10;DATABASE_URL=..."
+              placeholder="KEY=VALUE&#10;DATABASE_URL=postgres://...&#10;API_KEY=xyz"
               bind:value={activeService.raw_env}
               oninput={() => syncRawToEnv(activeService)}
             ></textarea>
@@ -968,297 +1155,138 @@
         {/if}
       </div>
 
-    <!-- ==================================================== -->
-    <!-- STEP 4: DYNAMIC STAGE (ROUTING OR NETWORKING)        -->
-    <!-- ==================================================== -->
     {:else if currentStep === 4}
-      {#if activeService.type === 'frontend'}
-        <!-- FRONTEND: EDGE ROUTING & RENDER-STYLE REWRITE RULES -->
-        <div class="step-pane">
-          <div class="pane-header">
-            <h2>Edge Routing & Rewrite Rules</h2>
-            <p class="pane-subtitle">
-              Configure edge domains and Render-style sequential rewrite/redirect rules (including external URL proxies).
-            </p>
-          </div>
-
-          <div class="form-group">
-            <label class="form-label" for="subdomain-input">Subdomain Slug</label>
-            <div class="subdomain-preview-row">
-              <input
-                id="subdomain-input"
-                type="text"
-                class="form-input font-mono"
-                bind:value={activeService.subdomain}
-              />
-              <span class="domain-suffix">.klouds.online</span>
-            </div>
-            <p class="text-xs text-muted mt-1">Live URL: <code>https://{activeService.subdomain}.klouds.online</code></p>
-          </div>
-
-          <div class="section-divider"></div>
-
-          <div class="rules-header">
-            <div>
-              <h3>Redirect & Rewrite Rules</h3>
-              <p class="text-xs text-muted">Evaluated in sequential order (top-to-bottom, first match wins). Supports external target URLs.</p>
-            </div>
-            <div class="rules-actions">
-              <button type="button" class="btn btn-secondary btn-sm" onclick={() => addRouteRule(activeService, 'rewrite')}>
-                <Plus size={14} />
-                <span>Add Rewrite</span>
-              </button>
-              <button type="button" class="btn btn-secondary btn-sm" onclick={() => addRouteRule(activeService, 'redirect')}>
-                <Plus size={14} />
-                <span>Add Redirect</span>
-              </button>
-            </div>
-          </div>
-
-          <div class="rules-list">
-            {#each activeService.route_rules as rule, rIdx}
-              <div class="rule-row">
-                <span class="rule-order">{rIdx + 1}</span>
-                <select class="form-select rule-type-select" bind:value={rule.type}>
-                  <option value="rewrite">Rewrite</option>
-                  <option value="redirect">Redirect</option>
-                </select>
-                <input
-                  type="text"
-                  class="form-input font-mono flex-1"
-                  placeholder="Source (e.g. /* or /api/*)"
-                  bind:value={rule.source}
-                />
-                <input
-                  type="text"
-                  class="form-input font-mono flex-1"
-                  placeholder="Target (e.g. /index.html or https://external-api.com)"
-                  bind:value={rule.target}
-                />
-                {#if rule.type === 'redirect'}
-                  <select class="form-select rule-status-select" bind:value={rule.status}>
-                    <option value={301}>301 Permanent</option>
-                    <option value={302}>302 Temporary</option>
-                  </select>
-                {/if}
-                <div class="rule-reorder-btns">
-                  <button
-                    type="button"
-                    class="btn-icon"
-                    title="Move Up"
-                    disabled={rIdx === 0}
-                    onclick={() => moveRuleUp(activeService, rIdx)}
-                  >
-                    <ArrowUp size={14} />
-                  </button>
-                  <button
-                    type="button"
-                    class="btn-icon"
-                    title="Move Down"
-                    disabled={rIdx === activeService.route_rules.length - 1}
-                    onclick={() => moveRuleDown(activeService, rIdx)}
-                  >
-                    <ArrowDown size={14} />
-                  </button>
-                  <button
-                    type="button"
-                    class="btn-icon text-danger"
-                    title="Delete Rule"
-                    onclick={() => removeRouteRule(activeService, rIdx)}
-                  >
-                    <Trash2 size={14} />
-                  </button>
-                </div>
-              </div>
-            {/each}
-          </div>
-        </div>
-
-      {:else if activeService.type === 'web'}
-        <!-- WEB / BACKEND SERVICE: NETWORKING & DOMAIN (NO REDIRECT RULES) -->
-        <div class="step-pane">
-          <div class="pane-header">
-            <h2>Networking & Domain Configuration</h2>
-            <p class="pane-subtitle">
-              Configure public and internal connectivity for your backend web service.
-            </p>
-          </div>
-
-          <div class="form-group">
-            <label class="form-label" for="web-subdomain">Public Subdomain</label>
-            <div class="subdomain-preview-row">
-              <input
-                id="web-subdomain"
-                type="text"
-                class="form-input font-mono"
-                bind:value={activeService.subdomain}
-              />
-              <span class="domain-suffix">.klouds.online</span>
-            </div>
-            <p class="text-xs text-muted mt-1">
-              Public HTTPS endpoint: <code>https://{activeService.subdomain}.klouds.online</code>
-            </p>
-          </div>
-
-          <div class="info-card">
-            <h4>Internal Service Discovery</h4>
-            <p>
-              Containers in this project can reach this service via internal network DNS:
-              <code>http://{activeService.subdomain}:{activeService.port}</code>
-            </p>
-          </div>
-        </div>
-      {/if}
-
-    <!-- ========================================== -->
-    <!-- STEP 5: REVIEW & MULTI-SERVICE DEPLOY      -->
-    <!-- ========================================== -->
-    {:else if currentStep === dynamicSteps.length}
+      <!-- STEP 4: REVIEW & DEPLOY -->
       <div class="step-pane">
         <div class="pane-header">
-          <h2>Review & Launch Services</h2>
-          <p class="pane-subtitle">
-            Verify the configuration for all services in this deployment batch.
+          <h3>Review & Batch Deployment</h3>
+          <p class="text-sm text-muted">
+            Review all {services.length} configured service(s) for this project before launching container builds.
           </p>
         </div>
 
-        <div class="review-services-grid">
-          {#each services as svc, sIdx}
-            <div class="review-service-card">
+        <div class="services-review-list">
+          {#each services as svc, idx}
+            <div class="review-service-card card">
               <div class="review-card-header">
-                <span class="badge badge-{svc.type}">{svc.type}</span>
-                <h3>{svc.name}</h3>
+                <div class="flex items-center gap-2">
+                  <span class="service-tab-num">{idx + 1}</span>
+                  <h4 class="m-0 font-semibold">{svc.name}</h4>
+                  <span class="service-tab-badge badge-{svc.type}">{svc.type}</span>
+                </div>
+
+                {#if svc.type !== 'worker' && svc.type !== 'cron'}
+                  <div class="flex items-center gap-1 font-mono text-xs text-muted">
+                    <Globe size={13} />
+                    <span>{slugify(svc.name)}.klouds.online</span>
+                  </div>
+                {/if}
               </div>
-              <div class="review-details">
-                <div class="review-row">
-                  <span class="label">Repository:</span>
-                  <span class="value font-mono text-xs">{svc.repo_url ? svc.repo_url.replace('https://', '') : 'Manual'}</span>
+
+              <div class="review-grid">
+                <div>
+                  <span class="review-label">Runtime</span>
+                  <span class="review-val font-semibold">
+                    {runtimeOptions[svc.runtime_language]?.label || svc.runtime_language}
+                    {#if svc.use_custom_version && svc.custom_runtime_version}
+                      <span class="font-mono text-xs">({runtimeEnvVarKey[svc.runtime_language]}={svc.custom_runtime_version})</span>
+                    {:else if svc.runtime_version}
+                      <span class="font-mono text-xs">({svc.runtime_version})</span>
+                    {/if}
+                  </span>
                 </div>
-                <div class="review-row">
-                  <span class="label">Branch / Root:</span>
-                  <span class="value font-mono text-xs">{svc.branch} ({svc.root_dir})</span>
+
+                <div>
+                  <span class="review-label">Directory</span>
+                  <span class="review-val font-mono text-xs">{svc.root_dir}</span>
                 </div>
-                <div class="review-row">
-                  <span class="label">Runtime:</span>
-                  <span class="value">{svc.runtime_language} (v{svc.runtime_version === 'custom' ? svc.custom_runtime_version : svc.runtime_version})</span>
+
+                <div>
+                  <span class="review-label">Port</span>
+                  <span class="review-val font-mono text-xs">{svc.port}</span>
                 </div>
-                {#if svc.type === 'frontend' || svc.type === 'web'}
-                  <div class="review-row">
-                    <span class="label">Public URL:</span>
-                    <span class="value text-primary font-mono text-xs">https://{svc.subdomain}.klouds.online</span>
-                  </div>
-                  <div class="review-row">
-                    <span class="label">Container Port:</span>
-                    <span class="value">{svc.port}</span>
-                  </div>
-                {/if}
-                <div class="review-row">
-                  <span class="label">Env Vars:</span>
-                  <span class="value">{svc.env_list.filter(e => e.key).length} configured</span>
+
+                <div>
+                  <span class="review-label">Environment Variables</span>
+                  <span class="review-val">{svc.env_list.filter(e => e.key.trim()).length} configured</span>
                 </div>
-                {#if svc.type === 'frontend'}
-                  <div class="review-row">
-                    <span class="label">Rewrite Rules:</span>
-                    <span class="value">{svc.route_rules.length} sequential rules</span>
-                  </div>
-                {/if}
               </div>
             </div>
           {/each}
         </div>
 
-        {#if isDeploying}
-          <div class="deployment-status-box">
-            <div class="spinner"></div>
-            <div>
-              <h4>Triggering Service Deployments...</h4>
-              <p class="text-xs text-muted">Building container images with Nixpacks and assigning edge routes.</p>
-            </div>
+        <div class="deploy-action-card card mt-4">
+          <div class="deploy-card-left">
+            <h4 class="mb-1">Ready to Deploy {services.length} Service{services.length > 1 ? 's' : ''}</h4>
+            <p class="text-sm text-muted mb-0">
+              Containers will be built via Nixpacks/Docker, wired to high-performance reverse proxies, and assigned guaranteed unique endpoints.
+            </p>
           </div>
-        {/if}
+
+          <button
+            type="button"
+            class="btn btn-primary"
+            disabled={isDeploying}
+            onclick={handleDeployAll}
+          >
+            {#if isDeploying}
+              <RefreshCw size={15} class="spin" />
+              <span>Deploying Services...</span>
+            {:else}
+              <Plus size={15} />
+              <span>Deploy All {services.length} Service{services.length > 1 ? 's' : ''}</span>
+            {/if}
+          </button>
+        </div>
       </div>
     {/if}
-  </div>
 
-  <!-- NAVIGATION ACTIONS FOOTER -->
-  <div class="stepper-footer">
-    <button
-      type="button"
-      class="btn btn-secondary"
-      disabled={currentStep === 1 || isDeploying}
-      onclick={handlePrevStep}
-    >
-      <ArrowLeft size={16} />
-      <span>Back</span>
-    </button>
+    <!-- WIZARD NAVIGATION FOOTER -->
+    <div class="wizard-footer">
+      <div>
+        {#if currentStep > 1}
+          <button
+            type="button"
+            class="btn btn-secondary"
+            disabled={isDeploying}
+            onclick={() => { deployError = ''; currentStep--; }}
+          >
+            <ArrowLeft size={14} />
+            <span>Previous Step</span>
+          </button>
+        {/if}
+      </div>
 
-    <div class="footer-right">
-      {#if currentStep < dynamicSteps.length}
-        <button type="button" class="btn btn-primary" onclick={handleNextStep}>
-          <span>Next: {dynamicSteps[currentStep]?.label || 'Continue'}</span>
-          <ArrowRight size={16} />
-        </button>
-      {:else}
-        <button
-          type="button"
-          class="btn btn-primary btn-launch"
-          disabled={isDeploying}
-          onclick={handleLaunchBatch}
-        >
-          <Rocket size={18} />
-          <span>{isDeploying ? 'Deploying Batch...' : `Deploy ${services.length} Service${services.length > 1 ? 's' : ''}`}</span>
-        </button>
-      {/if}
+      <div>
+        {#if currentStep < 4}
+          <button
+            type="button"
+            class="btn btn-primary"
+            onclick={handleNextStep}
+          >
+            <span>Next Step</span>
+            <ArrowRight size={14} />
+          </button>
+        {/if}
+      </div>
     </div>
   </div>
 </div>
 
 <style>
   .page-container {
-    max-width: 1200px;
+    max-width: 1040px;
     margin: 0 auto;
-    padding: var(--sp-6) var(--sp-6);
+    padding-bottom: 60px;
   }
 
-  .header-section {
-    margin-bottom: var(--sp-6);
-  }
-
-  .page-title {
-    font-size: 1.5rem;
-    font-weight: 700;
-    color: var(--color-ink);
-  }
-
-  .page-subtitle {
-    font-size: 0.875rem;
-    color: var(--color-ink-secondary);
-    margin-top: 4px;
-  }
-
-  .alert {
-    display: flex;
-    align-items: center;
-    gap: 10px;
-    padding: 12px 16px;
-    border-radius: var(--radius-md);
-    margin-bottom: var(--sp-5);
-    font-size: 0.875rem;
-  }
-
-  .alert-danger {
-    background: rgba(239, 68, 68, 0.12);
-    border: 1px solid rgba(239, 68, 68, 0.3);
-    color: #f87171;
-  }
-
-  /* Multi-service tabs bar */
+  /* Multi-service Tabs Bar */
   .services-tab-bar {
     display: flex;
     align-items: center;
     justify-content: space-between;
     gap: 12px;
-    margin-bottom: var(--sp-5);
+    margin-bottom: var(--sp-4);
     border-bottom: 1px solid var(--color-border);
     padding-bottom: 8px;
     overflow-x: auto;
@@ -1280,9 +1308,9 @@
   }
 
   .service-tab-item.active {
-    background: var(--color-surface-hover);
-    border-color: var(--color-primary, #6366f1);
-    box-shadow: 0 0 12px rgba(99, 102, 241, 0.2);
+    background: var(--color-surface-subtle);
+    border-color: var(--color-accent);
+    box-shadow: 0 0 10px var(--color-accent-glow);
   }
 
   .service-tab-btn {
@@ -1300,6 +1328,7 @@
 
   .service-tab-item.active .service-tab-btn {
     color: var(--color-ink);
+    font-weight: 600;
   }
 
   .service-tab-num {
@@ -1312,11 +1341,12 @@
     justify-content: center;
     font-size: 0.6875rem;
     font-weight: 700;
+    color: var(--color-ink);
   }
 
   .service-tab-item.active .service-tab-num {
-    background: var(--color-primary, #6366f1);
-    color: white;
+    background: var(--color-accent);
+    color: var(--color-accent-contrast);
   }
 
   .service-tab-badge {
@@ -1325,7 +1355,13 @@
     border-radius: 4px;
     text-transform: uppercase;
     font-weight: 600;
+    border: 1px solid var(--color-border);
   }
+
+  .badge-frontend { background: rgba(56, 189, 248, 0.12); color: #38bdf8; border-color: rgba(56, 189, 248, 0.3); }
+  .badge-web { background: rgba(255, 255, 255, 0.1); color: var(--color-ink); border-color: var(--color-border); }
+  .badge-worker { background: rgba(251, 191, 36, 0.12); color: #fbbf24; border-color: rgba(251, 191, 36, 0.3); }
+  .badge-cron { background: rgba(168, 85, 247, 0.12); color: #c084fc; border-color: rgba(168, 85, 247, 0.3); }
 
   .tab-close-btn {
     background: none;
@@ -1339,15 +1375,21 @@
   }
 
   .tab-close-btn:hover {
-    color: #f87171;
+    color: var(--color-danger);
   }
 
   /* Stepper */
   .stepper-container {
     display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
-    gap: 12px;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 10px;
     margin-bottom: var(--sp-6);
+  }
+
+  @media (max-width: 768px) {
+    .stepper-container {
+      grid-template-columns: repeat(2, 1fr);
+    }
   }
 
   .step-item {
@@ -1355,127 +1397,151 @@
     align-items: center;
     gap: 10px;
     padding: 12px 14px;
-    border-radius: var(--radius-md);
     background: var(--color-surface);
     border: 1px solid var(--color-border);
+    border-radius: var(--radius-md);
     cursor: pointer;
     text-align: left;
     transition: all var(--transition-fast);
   }
 
+  .step-item:disabled {
+    cursor: not-allowed;
+    opacity: 0.5;
+  }
+
   .step-item.active {
-    border-color: var(--color-primary, #6366f1);
-    background: rgba(99, 102, 241, 0.08);
+    border-color: var(--color-accent);
+    background: var(--color-surface-subtle);
+    box-shadow: 0 0 10px var(--color-accent-glow);
   }
 
   .step-item.completed {
-    border-color: rgba(34, 197, 94, 0.4);
+    border-color: var(--color-border);
   }
 
-  .step-circle {
-    width: 28px;
-    height: 28px;
+  .step-num {
+    width: 26px;
+    height: 26px;
     border-radius: 50%;
-    background: var(--color-border);
+    background: var(--color-surface-subtle);
+    border: 1px solid var(--color-border);
     display: flex;
     align-items: center;
     justify-content: center;
-    font-size: 0.8125rem;
-    font-weight: 600;
-    color: var(--color-ink-muted);
+    font-size: 0.75rem;
+    font-weight: 700;
+    color: var(--color-ink);
     flex-shrink: 0;
   }
 
-  .step-item.active .step-circle {
-    background: var(--color-primary, #6366f1);
-    color: white;
+  .step-item.active .step-num {
+    background: var(--color-accent);
+    color: var(--color-accent-contrast);
+    border-color: var(--color-accent);
   }
 
-  .step-item.completed .step-circle {
-    background: #22c55e;
-    color: white;
-  }
-
-  .step-text {
-    display: flex;
-    flex-direction: column;
-    min-width: 0;
+  .step-item.completed .step-num {
+    background: var(--color-surface-subtle);
+    color: var(--color-success);
+    border-color: var(--color-success);
   }
 
   .step-label {
     font-size: 0.8125rem;
     font-weight: 600;
     color: var(--color-ink);
+    line-height: 1.2;
   }
 
   .step-desc {
     font-size: 0.6875rem;
     color: var(--color-ink-muted);
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
+    line-height: 1.2;
+    margin-top: 2px;
   }
 
-  /* Step Card Container */
-  .step-card {
+  /* Wizard Card */
+  .wizard-card {
+    padding: var(--sp-6);
     background: var(--color-surface);
     border: 1px solid var(--color-border);
     border-radius: var(--radius-lg);
-    padding: var(--sp-6);
-    box-shadow: 0 4px 24px rgba(0, 0, 0, 0.3);
-    margin-bottom: var(--sp-6);
   }
 
   .pane-header {
     margin-bottom: var(--sp-5);
   }
 
-  .pane-header h2 {
-    font-size: 1.25rem;
-    font-weight: 700;
+  .pane-header h3 {
+    font-size: 1.125rem;
+    font-weight: 600;
+    margin-bottom: 4px;
     color: var(--color-ink);
   }
 
-  .pane-subtitle {
-    font-size: 0.8125rem;
-    color: var(--color-ink-secondary);
-    margin-top: 4px;
+  .form-grid-2 {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: var(--sp-4);
+    margin-bottom: var(--sp-4);
   }
 
-  /* Repositories picker */
-  .auto-repo-picker {
-    background: rgba(0, 0, 0, 0.2);
-    border: 1px solid var(--color-border-subtle);
-    border-radius: var(--radius-md);
-    padding: var(--sp-4);
-    margin-bottom: var(--sp-6);
+  @media (max-width: 640px) {
+    .form-grid-2 {
+      grid-template-columns: 1fr;
+    }
   }
 
-  .repo-filter-row {
+  .section-divider {
+    height: 1px;
+    background: var(--color-border);
+    margin: var(--sp-5) 0;
+  }
+
+  /* Connected Repositories */
+  .connect-banner {
     display: flex;
     align-items: center;
-    gap: 12px;
-    margin-bottom: var(--sp-4);
+    justify-content: space-between;
+    gap: 16px;
+    padding: 14px 18px;
+    background: var(--color-surface-subtle);
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-md);
+    margin-bottom: var(--sp-5);
+  }
+
+  .connect-banner h4 {
+    margin-bottom: 2px;
+    color: var(--color-ink);
+  }
+
+  .repos-filter-bar {
+    display: flex;
     flex-wrap: wrap;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+    margin-bottom: var(--sp-4);
   }
 
   .search-box {
     position: relative;
     flex: 1;
-    min-width: 260px;
+    min-width: 240px;
   }
 
   :global(.search-icon) {
     position: absolute;
-    left: 12px;
+    left: 10px;
     top: 50%;
     transform: translateY(-50%);
     color: var(--color-ink-muted);
-    pointer-events: none;
   }
 
   .search-input {
-    padding-left: 38px;
+    padding-left: 32px;
   }
 
   .provider-filter-pills {
@@ -1492,25 +1558,27 @@
     border: 1px solid var(--color-border);
     color: var(--color-ink-secondary);
     cursor: pointer;
+    transition: all var(--transition-fast);
   }
 
   .pill-btn.active {
-    background: var(--color-primary, #6366f1);
-    color: white;
-    border-color: var(--color-primary, #6366f1);
+    background: var(--color-accent);
+    color: var(--color-accent-contrast);
+    border-color: var(--color-accent);
   }
 
   .repos-grid {
     display: grid;
     grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
-    gap: 12px;
-    max-height: 340px;
+    gap: 10px;
+    max-height: 280px;
     overflow-y: auto;
     padding-right: 4px;
+    margin-bottom: var(--sp-5);
   }
 
   .repo-card {
-    background: var(--color-surface);
+    background: var(--color-surface-subtle);
     border: 1px solid var(--color-border);
     border-radius: var(--radius-md);
     padding: 12px;
@@ -1519,17 +1587,17 @@
     transition: all var(--transition-fast);
     display: flex;
     flex-direction: column;
-    gap: 6px;
+    gap: 4px;
+    color: var(--color-ink);
   }
 
   .repo-card:hover {
-    border-color: var(--color-primary, #6366f1);
-    transform: translateY(-1px);
+    border-color: var(--color-accent);
   }
 
   .repo-card.selected {
-    border-color: #22c55e;
-    background: rgba(34, 197, 94, 0.06);
+    border-color: var(--color-accent);
+    box-shadow: 0 0 10px var(--color-accent-glow);
   }
 
   .repo-card-top {
@@ -1540,113 +1608,95 @@
 
   .repo-provider-badge {
     font-size: 0.625rem;
-    font-weight: 700;
-    text-transform: uppercase;
-    padding: 2px 6px;
+    padding: 1px 6px;
     border-radius: 4px;
+    text-transform: uppercase;
+    font-weight: 600;
+    background: var(--color-border);
+    color: var(--color-ink);
   }
 
-  .repo-provider-badge.github { background: rgba(255, 255, 255, 0.1); color: var(--color-ink); }
-  .repo-provider-badge.gitlab { background: rgba(252, 109, 38, 0.2); color: #fc6d26; }
-  .repo-provider-badge.bitbucket { background: rgba(0, 82, 204, 0.2); color: #38bdf8; }
-
   .repo-private-tag {
-    font-size: 0.6875rem;
-    color: var(--color-ink-muted);
-    display: flex;
+    font-size: 0.625rem;
+    display: inline-flex;
     align-items: center;
-    gap: 4px;
+    gap: 3px;
+    color: var(--color-warning);
   }
 
   .repo-card-title {
-    font-size: 0.875rem;
+    font-size: 0.8125rem;
     font-weight: 600;
+    margin: 0;
+    word-break: break-word;
     color: var(--color-ink);
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
   }
 
   .repo-card-desc {
-    font-size: 0.75rem;
+    font-size: 0.6875rem;
     color: var(--color-ink-muted);
+    margin: 0;
     display: -webkit-box;
     -webkit-line-clamp: 2;
     -webkit-box-orient: vertical;
     overflow: hidden;
   }
 
-  .repo-card-bottom {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    margin-top: auto;
-    padding-top: 6px;
+  .branch-select-wrap {
+    position: relative;
+  }
+
+  :global(.select-chevron) {
+    position: absolute;
+    right: 12px;
+    top: 50%;
+    transform: translateY(-50%);
+    pointer-events: none;
+    color: var(--color-ink-muted);
+  }
+
+  .detecting-badge {
     font-size: 0.6875rem;
-  }
-
-  .branch-tag {
-    display: flex;
+    color: var(--color-ink-secondary);
+    display: inline-flex;
     align-items: center;
     gap: 4px;
-    color: var(--color-ink-secondary);
+    font-weight: normal;
   }
 
-  .selected-mark {
-    color: #4ade80;
-    font-weight: 600;
+  .detect-action-row {
     display: flex;
     align-items: center;
-    gap: 4px;
+    gap: 12px;
+    margin-top: var(--sp-3);
   }
 
-  .no-oauth-banner {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    background: rgba(99, 102, 241, 0.08);
-    border: 1px solid rgba(99, 102, 241, 0.25);
-    border-radius: var(--radius-md);
-    padding: 16px 20px;
-    margin-bottom: var(--sp-6);
-  }
-
-  .no-oauth-content h4 {
-    font-size: 0.9375rem;
-    color: var(--color-ink);
-    margin-bottom: 2px;
-  }
-
-  .no-oauth-content p {
-    font-size: 0.8125rem;
-    color: var(--color-ink-secondary);
-  }
-
-  /* Engine cards */
+  /* Engine Cards */
   .engine-cards-grid {
     display: grid;
-    grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
-    gap: 8px;
-    margin-top: 6px;
+    grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+    gap: 10px;
   }
 
   .engine-card {
     background: var(--color-surface);
     border: 1px solid var(--color-border);
     border-radius: var(--radius-md);
-    padding: 10px 12px;
+    padding: 10px 14px;
     text-align: left;
     cursor: pointer;
+    color: var(--color-ink);
     transition: all var(--transition-fast);
   }
 
   .engine-card:hover {
-    border-color: var(--color-primary, #6366f1);
+    border-color: var(--color-ink-muted);
   }
 
   .engine-card.selected {
-    border-color: var(--color-primary, #6366f1);
-    background: rgba(99, 102, 241, 0.1);
+    border-color: var(--color-accent);
+    background: var(--color-surface-subtle);
+    box-shadow: 0 0 10px var(--color-accent-glow);
   }
 
   .engine-card-top {
@@ -1660,88 +1710,70 @@
     font-weight: 500;
   }
 
-  /* Rules editor */
-  .rules-header {
+  /* Render-style Version Box */
+  .version-section {
+    background: var(--color-surface-subtle);
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-md);
+  }
+
+  .version-header {
     display: flex;
     align-items: center;
     justify-content: space-between;
-    margin-bottom: var(--sp-4);
-  }
-
-  .rules-actions {
-    display: flex;
+    flex-wrap: wrap;
     gap: 8px;
   }
 
-  .rules-list {
+  .custom-ver-checkbox {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 0.75rem;
+    color: var(--color-ink-secondary);
+    cursor: pointer;
+  }
+
+  .subdomain-preview-card {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 10px 14px;
+    background: var(--color-surface-subtle);
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-md);
+  }
+
+  .subdomain-preview-text {
+    flex: 1;
     display: flex;
     flex-direction: column;
-    gap: 8px;
+    gap: 2px;
   }
 
-  .rule-row {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    background: rgba(0, 0, 0, 0.2);
-    border: 1px solid var(--color-border-subtle);
-    border-radius: var(--radius-md);
-    padding: 8px 12px;
-  }
-
-  .rule-order {
-    font-size: 0.75rem;
-    font-weight: 700;
-    color: var(--color-ink-muted);
-    width: 18px;
-  }
-
-  .rule-type-select {
-    width: 110px;
-  }
-
-  .rule-status-select {
-    width: 130px;
-  }
-
-  .rule-reorder-btns {
-    display: flex;
-    align-items: center;
-    gap: 4px;
-  }
-
-  /* Environment variables */
+  /* Database Connection Injection */
   .db-inject-section {
     display: flex;
     align-items: center;
-    gap: 12px;
-    background: rgba(34, 197, 94, 0.08);
-    border: 1px solid rgba(34, 197, 94, 0.2);
-    border-radius: var(--radius-md);
-    padding: 10px 14px;
-    margin-bottom: var(--sp-4);
     flex-wrap: wrap;
-  }
-
-  .db-inject-label {
-    font-size: 0.75rem;
-    font-weight: 600;
-    color: #4ade80;
-    display: flex;
-    align-items: center;
-    gap: 6px;
+    gap: 8px;
+    margin-bottom: var(--sp-4);
+    padding: 10px 14px;
+    background: var(--color-surface-subtle);
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-md);
   }
 
   .db-inject-buttons {
     display: flex;
-    gap: 6px;
     flex-wrap: wrap;
+    gap: 6px;
   }
 
   .env-mode-toggle {
     display: flex;
     gap: 6px;
-    margin-bottom: var(--sp-4);
+    margin-bottom: var(--sp-3);
   }
 
   .mode-btn {
@@ -1752,11 +1784,13 @@
     border: 1px solid var(--color-border);
     color: var(--color-ink-secondary);
     cursor: pointer;
+    transition: all var(--transition-fast);
   }
 
   .mode-btn.active {
-    background: var(--color-border);
-    color: var(--color-ink);
+    background: var(--color-accent);
+    color: var(--color-accent-contrast);
+    border-color: var(--color-accent);
   }
 
   .env-table {
@@ -1771,123 +1805,80 @@
     gap: 8px;
   }
 
-  .subdomain-preview-row {
+  .raw-env-wrap textarea {
+    width: 100%;
+    resize: vertical;
+  }
+
+  /* Review Screen */
+  .services-review-list {
     display: flex;
-    align-items: center;
-  }
-
-  .domain-suffix {
-    padding: 8px 12px;
-    background: var(--color-surface-hover);
-    border: 1px solid var(--color-border);
-    border-left: none;
-    border-radius: 0 var(--radius-md) var(--radius-md) 0;
-    color: var(--color-ink-muted);
-    font-size: 0.875rem;
-    font-family: monospace;
-  }
-
-  /* Review Grid */
-  .review-services-grid {
-    display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
-    gap: var(--sp-5);
+    flex-direction: column;
+    gap: 12px;
   }
 
   .review-service-card {
-    background: var(--color-surface-hover);
+    padding: 16px;
+    background: var(--color-surface-subtle);
     border: 1px solid var(--color-border);
     border-radius: var(--radius-md);
-    padding: var(--sp-5);
   }
 
   .review-card-header {
     display: flex;
     align-items: center;
-    gap: 8px;
-    margin-bottom: var(--sp-4);
-    padding-bottom: var(--sp-3);
-    border-bottom: 1px solid var(--color-border-subtle);
-  }
-
-  .review-card-header h3 {
-    font-size: 1rem;
-    font-weight: 600;
-  }
-
-  .review-details {
-    display: flex;
-    flex-direction: column;
-    gap: 8px;
-    font-size: 0.8125rem;
-  }
-
-  .review-row {
-    display: flex;
     justify-content: space-between;
+    margin-bottom: 12px;
+    padding-bottom: 8px;
+    border-bottom: 1px solid var(--color-border);
   }
 
-  .review-row .label {
-    color: var(--color-ink-muted);
-  }
-
-  .review-row .value {
-    color: var(--color-ink);
-    font-weight: 500;
-  }
-
-  .deployment-status-box {
-    margin-top: var(--sp-6);
-    display: flex;
-    align-items: center;
-    gap: 16px;
-    background: rgba(99, 102, 241, 0.1);
-    border: 1px solid rgba(99, 102, 241, 0.3);
-    border-radius: var(--radius-md);
-    padding: 16px 20px;
-  }
-
-  /* Stepper footer */
-  .stepper-footer {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    padding-top: var(--sp-4);
-  }
-
-  .form-grid-2 {
+  .review-grid {
     display: grid;
-    grid-template-columns: 1fr 1fr;
-    gap: var(--sp-4);
+    grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+    gap: 12px;
   }
 
-  @media (max-width: 640px) {
-    .form-grid-2 {
-      grid-template-columns: 1fr;
-    }
+  .review-label {
+    display: block;
+    font-size: 0.6875rem;
+    color: var(--color-ink-muted);
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
   }
 
-  .section-divider {
-    height: 1px;
-    background: var(--color-border-subtle);
-    margin: var(--sp-5) 0;
+  .review-val {
+    font-size: 0.8125rem;
+    color: var(--color-ink);
   }
 
-  .spinner {
-    width: 24px;
-    height: 24px;
-    border: 2px solid rgba(255, 255, 255, 0.1);
-    border-top-color: var(--color-primary, #6366f1);
-    border-radius: 50%;
-    animation: spin 0.8s linear infinite;
+  .deploy-action-card {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 16px;
+    padding: 18px;
+    background: var(--color-surface);
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-md);
+  }
+
+  /* Wizard Navigation Footer */
+  .wizard-footer {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-top: var(--sp-6);
+    padding-top: var(--sp-4);
+    border-top: 1px solid var(--color-border);
+  }
+
+  :global(.spin) {
+    animation: spin 1s linear infinite;
   }
 
   @keyframes spin {
+    from { transform: rotate(0deg); }
     to { transform: rotate(360deg); }
   }
-
-  .badge-frontend { background: rgba(56, 189, 248, 0.15); color: #38bdf8; }
-  .badge-web { background: rgba(99, 102, 241, 0.15); color: #818cf8; }
-  .badge-worker { background: rgba(245, 158, 11, 0.15); color: #fbbf24; }
-  .badge-cron { background: rgba(168, 85, 247, 0.15); color: #c084fc; }
 </style>

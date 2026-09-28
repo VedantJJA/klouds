@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -113,7 +114,10 @@ func (h *ServiceHandler) Create(w http.ResponseWriter, r *http.Request) {
 	}
 
 	slug := slugify(req.Name)
-	subdomain := slug // slug.yourdomain.com
+	if _, err := h.queries.GetServiceBySlug(r.Context(), slug); err == nil {
+		slug = fmt.Sprintf("%s-%s", slug, randomHex(3))
+	}
+	subdomain := h.resolveUniqueSubdomain(r.Context(), req.Name)
 
 	// Get resource limits from quota
 	var cpuLimit int32 = 500
@@ -915,6 +919,26 @@ func randomHex(n int) string {
 	return hex.EncodeToString(b)
 }
 
+func (h *ServiceHandler) resolveUniqueSubdomain(ctx context.Context, baseName string) string {
+	clean := slugify(baseName)
+	if clean == "" {
+		clean = "app"
+	}
+	exists, err := h.queries.SubdomainExists(ctx, clean)
+	if err == nil && !exists {
+		return clean
+	}
+	for i := 0; i < 15; i++ {
+		suffix := randomHex(2)
+		candidate := fmt.Sprintf("%s-%s", clean, suffix)
+		exists, err := h.queries.SubdomainExists(ctx, candidate)
+		if err == nil && !exists {
+			return candidate
+		}
+	}
+	return fmt.Sprintf("%s-%d", clean, time.Now().Unix()%100000)
+}
+
 // BatchCreateServiceItem defines an individual service in a multi-service batch creation request.
 type BatchCreateServiceItem struct {
 	Name            string            `json:"name"`
@@ -1001,10 +1025,7 @@ func (h *ServiceHandler) BatchCreate(w http.ResponseWriter, r *http.Request) {
 			slug = fmt.Sprintf("%s-%s", slug, randomHex(3))
 		}
 
-		subdomain := item.Subdomain
-		if subdomain == "" {
-			subdomain = slug
-		}
+		subdomain := h.resolveUniqueSubdomain(r.Context(), svcName)
 
 		svcType := item.Type
 		if svcType == "" {
