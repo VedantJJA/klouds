@@ -46,6 +46,7 @@ type DeployRequest struct {
 
 // Deploy executes the zero-downtime blue-green container swap.
 func (d *Deployer) Deploy(ctx context.Context, req DeployRequest) error {
+	startTime := time.Now()
 	svc, err := d.queries.GetServiceByID(ctx, req.ServiceID)
 	if err != nil {
 		return fmt.Errorf("fetch service: %w", err)
@@ -159,7 +160,8 @@ func (d *Deployer) Deploy(ctx context.Context, req DeployRequest) error {
 		log.Error().Err(err).Msg("Failed to update service container record")
 	}
 
-	_, err = d.queries.UpdateDeploymentFinished(ctx, req.DeploymentID, "active", 0)
+	durationSec := int32(time.Since(startTime).Seconds())
+	_, err = d.queries.UpdateDeploymentFinished(ctx, req.DeploymentID, "live", durationSec)
 	if err != nil {
 		log.Error().Err(err).Msg("Failed to update deployment status")
 	}

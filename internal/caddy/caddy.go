@@ -214,23 +214,11 @@ func (m *Manager) AddRoute(route Route) error {
 		return err
 	}
 
-	// Try updating existing route via @id
-	req, err := http.NewRequest("PATCH", fmt.Sprintf("%s/id/%s", m.adminAPI, routeID), bytes.NewReader(body))
-	if err == nil {
-		req.Header.Set("Content-Type", "application/json")
-		resp, err := http.DefaultClient.Do(req)
-		if err == nil && resp.StatusCode == http.StatusOK {
-			resp.Body.Close()
-			log.Info().Str("host", host).Str("upstream", upstream).Msg("Caddy dynamic route updated via @id")
-			return nil
-		}
-		if resp != nil {
-			resp.Body.Close()
-		}
-	}
+	// Remove previous route with this @id if present, so we can cleanly insert at index 0
+	_ = m.RemoveRoute(route.Subdomain)
 
-	// If @id doesn't exist, insert at index 0 of srv0 routes (before the catch-all)
-	req2, err := http.NewRequest("POST", fmt.Sprintf("%s/config/apps/http/servers/srv0/routes/0", m.adminAPI), bytes.NewReader(body))
+	// Insert at index 0 of srv0 routes (before the catch-all wildcard *.domain)
+	req2, err := http.NewRequest("PUT", fmt.Sprintf("%s/config/apps/http/servers/srv0/routes/0", m.adminAPI), bytes.NewReader(body))
 	if err != nil {
 		return fmt.Errorf("create caddy route request: %w", err)
 	}
