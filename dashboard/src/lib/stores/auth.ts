@@ -12,6 +12,16 @@ interface AuthState {
   initialized: boolean;
 }
 
+function extractUserAndQuota(res: any): { user: User; quota: Quota | null } {
+  if (res && res.user) {
+    return { user: res.user, quota: res.quota || null };
+  }
+  if (res && res.id) {
+    return { user: res as User, quota: res.quota || null };
+  }
+  throw new Error('Invalid user profile response');
+}
+
 function createAuthStore() {
   const { subscribe, set, update } = writable<AuthState>({
     user: null,
@@ -33,10 +43,11 @@ function createAuthStore() {
       update(s => ({ ...s, token, loading: true }));
       try {
         const res = await api.me();
+        const { user, quota } = extractUserAndQuota(res);
         update(s => ({
           ...s,
-          user: res.user,
-          quota: res.quota || null,
+          user,
+          quota,
           loading: false,
           initialized: true
         }));
@@ -68,14 +79,15 @@ function createAuthStore() {
       update(s => ({ ...s, token, loading: true }));
       try {
         const res = await api.me();
+        const { user, quota } = extractUserAndQuota(res);
         update(s => ({
           ...s,
-          user: res.user,
-          quota: res.quota || null,
+          user,
+          quota,
           loading: false,
           initialized: true
         }));
-        if (res.user.status === 'pending') {
+        if (user.status === 'pending') {
           goto('/access/pending');
         } else if (redirectUrl && !redirectUrl.includes('://')) {
           goto(redirectUrl);
@@ -120,7 +132,8 @@ function createAuthStore() {
     refreshUser: async () => {
       try {
         const res = await api.me();
-        update(s => ({ ...s, user: res.user, quota: res.quota || null }));
+        const { user, quota } = extractUserAndQuota(res);
+        update(s => ({ ...s, user, quota }));
       } catch {
         // Token might have expired
       }
