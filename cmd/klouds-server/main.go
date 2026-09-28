@@ -20,6 +20,7 @@ import (
 	"github.com/vedant/klouds/internal/config"
 	"github.com/vedant/klouds/internal/container"
 	"github.com/vedant/klouds/internal/db"
+	"github.com/vedant/klouds/internal/dbproxy"
 	"github.com/vedant/klouds/internal/secrets"
 )
 
@@ -84,6 +85,13 @@ func main() {
 	// Initialize Nixpacks build engine and blue-green deployer
 	buildEngine := builder.NewEngine(pool, cfg.DataDir)
 	deployer := builder.NewDeployer(pool, containerMgr, caddyMgr, cfg.Domain)
+
+	// Initialize single-port external database TCP router (PostgreSQL 5432, Redis 6379)
+	databaseProxy := dbproxy.NewDatabaseProxy(pool, cfg.Domain, 5432, 6379)
+	if err := databaseProxy.Start(); err != nil {
+		log.Warn().Err(err).Msg("Database proxy initialization warning")
+	}
+	defer databaseProxy.Stop()
 
 	// Build router
 	router := api.NewRouter(api.RouterConfig{

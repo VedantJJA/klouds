@@ -394,8 +394,13 @@ class ApiClient {
 
   async getDatabaseConnection(id: string): Promise<{
     connection_url: string;
+    internal_connection_string?: string;
+    external_connection_string?: string;
     host: string;
     port: number;
+    internal_host?: string;
+    external_host?: string;
+    external_port?: number;
     username?: string;
     password?: string;
     database?: string;

@@ -567,31 +567,29 @@ func (h *ServiceHandler) SetRoutes(w http.ResponseWriter, r *http.Request) {
 	}
 
 	createdRules := make([]db.RouteRule, 0, len(req.Routes))
-	var caddyRedirects []caddy.RedirectRule
-	var caddyRewrites []caddy.RewriteRule
+	orderedRules := make([]caddy.OrderedRule, 0, len(req.Routes))
 
 	for _, item := range req.Routes {
 		ruleType := strings.ToLower(strings.TrimSpace(item.Type))
 		src := strings.TrimSpace(item.Source)
 		dst := strings.TrimSpace(item.Target)
 		var statusPtr *int32
+		statusCode := 0
 		if ruleType == "redirect" {
 			st := item.Status
 			if st != 301 && st != 302 {
 				st = 301
 			}
 			statusPtr = &st
-			caddyRedirects = append(caddyRedirects, caddy.RedirectRule{
-				Source:     src,
-				Target:     dst,
-				StatusCode: int(st),
-			})
-		} else {
-			caddyRewrites = append(caddyRewrites, caddy.RewriteRule{
-				Source: src,
-				Target: dst,
-			})
+			statusCode = int(st)
 		}
+
+		orderedRules = append(orderedRules, caddy.OrderedRule{
+			Type:       ruleType,
+			Source:     src,
+			Target:     dst,
+			StatusCode: statusCode,
+		})
 
 		rr, err := h.queries.CreateRouteRule(r.Context(), db.CreateRouteRuleParams{
 			ServiceID: serviceID,
@@ -618,8 +616,7 @@ func (h *ServiceHandler) SetRoutes(w http.ResponseWriter, r *http.Request) {
 			Subdomain:   svc.Subdomain,
 			BackendHost: containerTarget,
 			BackendPort: port,
-			Redirects:   caddyRedirects,
-			Rewrites:    caddyRewrites,
+			Rules:       orderedRules,
 		}
 		if err := h.caddy.AddRoute(cRoute); err != nil {
 			log.Error().Err(err).Msg("failed to live update Caddy route rules")

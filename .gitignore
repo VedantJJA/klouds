@@ -37,3 +37,5 @@ dashboard/build/
 klouds_pg_data/
 klouds_caddy_data/
 klouds_caddy_config/
+
+.playwright-mcp/

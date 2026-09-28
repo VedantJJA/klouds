@@ -114,10 +114,22 @@ func (h *DatabaseHandler) Create(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	slug := slugify(req.Name)
-	dbName := fmt.Sprintf("klouds_%s", slug)
-	username := fmt.Sprintf("klouds_%s", slug)
-	password := generatePassword(24)
+	prefix := "dpg"
+	switch req.Engine {
+	case "redis":
+		prefix = "red"
+	case "mysql":
+		prefix = "mysql"
+	case "mongodb":
+		prefix = "mongo"
+	}
+
+	idSuffix := generateRandomID(10)
+	internalHost := fmt.Sprintf("%s-%s", prefix, idSuffix)
+	slug := fmt.Sprintf("%s-%s", slugify(req.Name), idSuffix[:6])
+	dbName := fmt.Sprintf("kdb_%s", idSuffix[:8])
+	username := fmt.Sprintf("user_%s", idSuffix[:8])
+	password := generatePassword(32)
 
 	// Encrypt password for storage
 	encPassword, err := h.encryptor.Encrypt(password)
@@ -129,9 +141,6 @@ func (h *DatabaseHandler) Create(w http.ResponseWriter, r *http.Request) {
 	// Determine internal port
 	portMap := map[string]int32{"postgresql": 5432, "mysql": 3306, "redis": 6379, "mongodb": 27017}
 	internalPort := portMap[req.Engine]
-
-	// Internal hostname on Docker network
-	internalHost := fmt.Sprintf("klouds-db-%s", slug)
 
 	// Get resource limits
 	var cpuLimit int32 = 500
@@ -258,48 +267,70 @@ func (h *DatabaseHandler) ConnectionInfo(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	info := map[string]interface{}{
-		"host":     dbRecord.InternalHost,
-		"port":     dbRecord.InternalPort,
-		"database": dbRecord.DatabaseName,
-		"username": dbRecord.Username,
-		"password": password,
+	domain := h.domain
+	if domain == "" {
+		domain = "klouds.online"
 	}
 
-	// Build connection string based on engine
+	internalConn := ""
+	externalConn := ""
+	externalPort := int32(5432)
+
 	switch dbRecord.Engine {
 	case "postgresql":
-		info["connection_string"] = fmt.Sprintf(
+		externalPort = 5432
+		internalConn = fmt.Sprintf(
 			"postgresql://%s:%s@%s:%d/%s",
 			dbRecord.Username, password, dbRecord.InternalHost, dbRecord.InternalPort, dbRecord.DatabaseName,
 		)
+		externalConn = fmt.Sprintf(
+			"postgresql://%s:%s@%s:%d/%s",
+			dbRecord.Username, password, domain, externalPort, dbRecord.DatabaseName,
+		)
 	case "mysql":
-		info["connection_string"] = fmt.Sprintf(
+		externalPort = 3306
+		internalConn = fmt.Sprintf(
 			"%s:%s@tcp(%s:%d)/%s",
 			dbRecord.Username, password, dbRecord.InternalHost, dbRecord.InternalPort, dbRecord.DatabaseName,
 		)
+		externalConn = fmt.Sprintf(
+			"%s:%s@tcp(%s:%d)/%s",
+			dbRecord.Username, password, domain, externalPort, dbRecord.DatabaseName,
+		)
 	case "redis":
-		if password != "" {
-			info["connection_string"] = fmt.Sprintf(
-				"redis://default:%s@%s:%d",
-				password, dbRecord.InternalHost, dbRecord.InternalPort,
-			)
-		} else {
-			info["connection_string"] = fmt.Sprintf(
-				"redis://%s:%d",
-				dbRecord.InternalHost, dbRecord.InternalPort,
-			)
-		}
+		externalPort = 6379
+		internalConn = fmt.Sprintf(
+			"redis://default:%s@%s:%d",
+			password, dbRecord.InternalHost, dbRecord.InternalPort,
+		)
+		externalConn = fmt.Sprintf(
+			"redis://default:%s@%s:%d",
+			password, domain, externalPort,
+		)
 	case "mongodb":
-		info["connection_string"] = fmt.Sprintf(
+		externalPort = 27017
+		internalConn = fmt.Sprintf(
 			"mongodb://%s:%s@%s:%d/%s",
 			dbRecord.Username, password, dbRecord.InternalHost, dbRecord.InternalPort, dbRecord.DatabaseName,
 		)
+		externalConn = fmt.Sprintf(
+			"mongodb://%s:%s@%s:%d/%s",
+			dbRecord.Username, password, domain, externalPort, dbRecord.DatabaseName,
+		)
 	}
 
-	if dbRecord.ExternalAccess && dbRecord.ExternalSubdomain != nil {
-		info["external_host"] = fmt.Sprintf("%s.%s", *dbRecord.ExternalSubdomain, h.domain)
-		info["external_port"] = 443
+	info := map[string]interface{}{
+		"host":                       dbRecord.InternalHost,
+		"port":                       dbRecord.InternalPort,
+		"database":                   dbRecord.DatabaseName,
+		"username":                   dbRecord.Username,
+		"password":                   password,
+		"connection_string":          internalConn,
+		"internal_connection_string": internalConn,
+		"external_connection_string": externalConn,
+		"internal_host":              dbRecord.InternalHost,
+		"external_host":              domain,
+		"external_port":              externalPort,
 	}
 
 	writeJSON(w, http.StatusOK, info)
@@ -340,8 +371,8 @@ func (h *DatabaseHandler) Delete(w http.ResponseWriter, r *http.Request) {
 func (h *DatabaseHandler) provisionDatabase(dbRecord db.Database, password string) {
 	ctx := context.Background()
 
-	containerName := fmt.Sprintf("klouds-db-%s", dbRecord.Slug)
-	dataVolume := fmt.Sprintf("%s/databases/%s", h.dataDir, dbRecord.Slug)
+	containerName := fmt.Sprintf("klouds-db-%s", dbRecord.InternalHost)
+	dataVolume := fmt.Sprintf("%s/databases/%s", h.dataDir, dbRecord.InternalHost)
 
 	containerID, err := h.containers.CreateDatabaseContainer(ctx, container.DatabaseConfig{
 		Name:         containerName,
@@ -380,4 +411,15 @@ func generatePassword(length int) string {
 	b := make([]byte, length)
 	_, _ = rand.Read(b)
 	return hex.EncodeToString(b)[:length]
+}
+
+// generateRandomID creates a lowercase alphanumeric random ID of length n.
+func generateRandomID(n int) string {
+	const charset = "abcdefghijklmnopqrstuvwxyz0123456789"
+	b := make([]byte, n)
+	_, _ = rand.Read(b)
+	for i := range b {
+		b[i] = charset[int(b[i])%len(charset)]
+	}
+	return string(b)
 }

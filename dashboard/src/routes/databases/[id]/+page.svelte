@@ -21,8 +21,13 @@
   let database = $state<Database | null>(null);
   let connectionInfo = $state<{
     connection_url: string;
+    internal_connection_string?: string;
+    external_connection_string?: string;
     host: string;
     port: number;
+    internal_host?: string;
+    external_host?: string;
+    external_port?: number;
     username?: string;
     password?: string;
     database?: string;
@@ -168,17 +173,24 @@
             </div>
           {/if}
 
-          {#if connectionInfo.connection_url}
+          {#if connectionInfo.connection_url || connectionInfo.internal_connection_string}
+            <!-- Internal Connection String (Render-style) -->
             <div class="uri-box mt-3">
-              <div class="uri-label">Connection String URI</div>
+              <div class="flex items-center justify-between mb-1">
+                <span class="uri-label">Internal Database URL</span>
+                <span class="badge badge-success" style="font-size: 0.65rem;">Internal Network</span>
+              </div>
+              <p class="text-xs text-muted mb-2">For microservices & applications deployed inside your Klouds platform.</p>
               <div class="uri-content">
                 <code class="uri-code">
-                  {showPassword ? connectionInfo.connection_url : connectionInfo.connection_url.replace(/:[^:@]+@/, ':••••••@')}
+                  {showPassword
+                    ? (connectionInfo.internal_connection_string || connectionInfo.connection_url)
+                    : (connectionInfo.internal_connection_string || connectionInfo.connection_url).replace(/:[^:@]+@/, ':••••••@')}
                 </code>
                 <button
                   class="btn btn-secondary btn-sm"
-                  onclick={() => copyToClipboard(connectionInfo?.connection_url || '')}
-                  title="Copy URI"
+                  onclick={() => copyToClipboard(connectionInfo?.internal_connection_string || connectionInfo?.connection_url || '')}
+                  title="Copy Internal URI"
                 >
                   {#if copied}
                     <Check size={14} />
@@ -190,6 +202,37 @@
                 </button>
               </div>
             </div>
+
+            <!-- External Connection String (Render-style single port) -->
+            {#if connectionInfo.external_connection_string}
+              <div class="uri-box mt-3" style="border-color: rgba(59, 130, 246, 0.3); background: rgba(59, 130, 246, 0.03);">
+                <div class="flex items-center justify-between mb-1">
+                  <span class="uri-label text-accent">External Database URL</span>
+                  <span class="badge badge-primary" style="font-size: 0.65rem;">Single-Port Router</span>
+                </div>
+                <p class="text-xs text-muted mb-2">Connect externally from psql, DBeaver, TablePlus, or local development on port {connectionInfo.external_port || 5432}.</p>
+                <div class="uri-content">
+                  <code class="uri-code">
+                    {showPassword
+                      ? connectionInfo.external_connection_string
+                      : connectionInfo.external_connection_string.replace(/:[^:@]+@/, ':••••••@')}
+                  </code>
+                  <button
+                    class="btn btn-secondary btn-sm"
+                    onclick={() => copyToClipboard(connectionInfo?.external_connection_string || '')}
+                    title="Copy External URI"
+                  >
+                    {#if copied}
+                      <Check size={14} />
+                      <span>Copied</span>
+                    {:else}
+                      <Copy size={14} />
+                      <span>Copy</span>
+                    {/if}
+                  </button>
+                </div>
+              </div>
+            {/if}
           {/if}
         </div>
       {:else}

@@ -143,22 +143,16 @@ func (d *Deployer) Deploy(ctx context.Context, req DeployRequest) error {
 		}
 		if rules, err := d.queries.ListRouteRulesByService(ctx, svc.ID); err == nil {
 			for _, r := range rules {
-				if r.Type == "redirect" {
-					status := 301
-					if r.Status != nil && *r.Status != 0 {
-						status = int(*r.Status)
-					}
-					route.Redirects = append(route.Redirects, caddy.RedirectRule{
-						Source:     r.Source,
-						Target:     r.Target,
-						StatusCode: status,
-					})
-				} else if r.Type == "rewrite" {
-					route.Rewrites = append(route.Rewrites, caddy.RewriteRule{
-						Source: r.Source,
-						Target: r.Target,
-					})
+				status := 301
+				if r.Status != nil && *r.Status != 0 {
+					status = int(*r.Status)
 				}
+				route.Rules = append(route.Rules, caddy.OrderedRule{
+					Type:       r.Type,
+					Source:     r.Source,
+					Target:     r.Target,
+					StatusCode: status,
+				})
 			}
 		}
 		if err := d.caddy.AddRoute(route); err != nil {

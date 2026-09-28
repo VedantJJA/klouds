@@ -7,6 +7,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"net/url"
+	"strings"
 
 	"github.com/rs/zerolog/log"
 )
@@ -25,19 +27,28 @@ func NewManager(adminAPI, domain string) *Manager {
 	}
 }
 
+// OrderedRule represents an ordered redirect or rewrite rule (supporting internal paths and external URLs).
+type OrderedRule struct {
+	Type       string // "redirect" or "rewrite"
+	Source     string // path pattern, e.g. "/*" or "/api/*"
+	Target     string // destination path or external URL, e.g. "/index.html" or "https://api.external.com"
+	StatusCode int    // 301 or 302 for redirects
+}
+
 // Route represents a Caddy route to a backend container.
 type Route struct {
-	Subdomain    string // e.g. "myapp" -> myapp.domain.com
-	BackendHost  string // Docker network hostname
-	BackendPort  int    // Container internal port
-	Redirects    []RedirectRule
-	Rewrites     []RewriteRule
+	Subdomain   string // e.g. "myapp" -> myapp.domain.com
+	BackendHost string // Docker network hostname
+	BackendPort int    // Container internal port
+	Rules       []OrderedRule
+	Redirects   []RedirectRule // Backwards compatibility
+	Rewrites    []RewriteRule  // Backwards compatibility
 }
 
 // RedirectRule represents a redirect configuration.
 type RedirectRule struct {
 	Source     string
-	Target    string
+	Target     string
 	StatusCode int // 301 or 302
 }
 
@@ -101,7 +112,7 @@ func (m *Manager) CaddyJSON(routes []Route) map[string]interface{} {
 	for _, route := range routes {
 		host := fmt.Sprintf("%s.%s", route.Subdomain, m.domain)
 		upstream := fmt.Sprintf("%s:%d", route.BackendHost, route.BackendPort)
-		handlers := buildRouteHandlers(upstream, route.Redirects, route.Rewrites)
+		handlers := buildRouteHandlers(upstream, route.Rules, route.Redirects, route.Rewrites)
 
 		caddyRoute := map[string]interface{}{
 			"match": []map[string]interface{}{
@@ -174,7 +185,7 @@ func (m *Manager) AddRoute(route Route) error {
 	upstream := fmt.Sprintf("%s:%d", route.BackendHost, route.BackendPort)
 
 	routeID := fmt.Sprintf("route-%s", route.Subdomain)
-	handlers := buildRouteHandlers(upstream, route.Redirects, route.Rewrites)
+	handlers := buildRouteHandlers(upstream, route.Rules, route.Redirects, route.Rewrites)
 
 	caddyRoute := map[string]interface{}{
 		"@id":      routeID,
@@ -227,9 +238,31 @@ func (m *Manager) RemoveRoute(subdomain string) error {
 	return nil
 }
 
-// buildRouteHandlers creates the Caddy handler chain for a route, using subroute when redirects or rewrites exist.
-func buildRouteHandlers(upstream string, redirects []RedirectRule, rewrites []RewriteRule) []map[string]interface{} {
-	if len(redirects) == 0 && len(rewrites) == 0 {
+// buildRouteHandlers creates the Caddy handler chain for a route, maintaining strict evaluation order and supporting external rewrites.
+func buildRouteHandlers(upstream string, orderedRules []OrderedRule, redirects []RedirectRule, rewrites []RewriteRule) []map[string]interface{} {
+	// Consolidate into unified ordered list if legacy slices are used
+	rules := make([]OrderedRule, 0, len(orderedRules)+len(redirects)+len(rewrites))
+	if len(orderedRules) > 0 {
+		rules = append(rules, orderedRules...)
+	} else {
+		for _, r := range redirects {
+			rules = append(rules, OrderedRule{
+				Type:       "redirect",
+				Source:     r.Source,
+				Target:     r.Target,
+				StatusCode: r.StatusCode,
+			})
+		}
+		for _, rw := range rewrites {
+			rules = append(rules, OrderedRule{
+				Type:   "rewrite",
+				Source: rw.Source,
+				Target: rw.Target,
+			})
+		}
+	}
+
+	if len(rules) == 0 {
 		return []map[string]interface{}{
 			{
 				"handler":   "reverse_proxy",
@@ -238,46 +271,98 @@ func buildRouteHandlers(upstream string, redirects []RedirectRule, rewrites []Re
 		}
 	}
 
-	subroutes := make([]map[string]interface{}, 0, len(redirects)+len(rewrites)+1)
+	subroutes := make([]map[string]interface{}, 0, len(rules)+1)
 
-	// Add redirects
-	for _, redir := range redirects {
-		status := redir.StatusCode
-		if status == 0 {
-			status = 301
+	// Process rules in exact sequential order (Render-style top-to-bottom first-match-wins)
+	for _, rule := range rules {
+		src := strings.TrimSpace(rule.Source)
+		dst := strings.TrimSpace(rule.Target)
+		if src == "" || dst == "" {
+			continue
 		}
-		subroutes = append(subroutes, map[string]interface{}{
-			"match": []map[string]interface{}{
-				{"path": []string{redir.Source}},
-			},
-			"handle": []map[string]interface{}{
-				{
-					"handler":     "static_response",
-					"status_code": fmt.Sprintf("%d", status),
-					"headers": map[string][]string{
-						"Location": {redir.Target},
+
+		if rule.Type == "redirect" {
+			status := rule.StatusCode
+			if status != 301 && status != 302 {
+				status = 301
+			}
+			subroutes = append(subroutes, map[string]interface{}{
+				"match": []map[string]interface{}{
+					{"path": []string{src}},
+				},
+				"handle": []map[string]interface{}{
+					{
+						"handler":     "static_response",
+						"status_code": fmt.Sprintf("%d", status),
+						"headers": map[string][]string{
+							"Location": {dst},
+						},
 					},
 				},
-			},
-		})
-	}
+			})
+		} else {
+			// Rewrite rule: check if destination is an external URL (e.g. https://api.external.com)
+			if strings.HasPrefix(dst, "http://") || strings.HasPrefix(dst, "https://") {
+				u, err := url.Parse(dst)
+				if err == nil && u.Host != "" {
+					dialTarget := u.Host
+					if !strings.Contains(dialTarget, ":") {
+						if u.Scheme == "https" {
+							dialTarget += ":443"
+						} else {
+							dialTarget += ":80"
+						}
+					}
 
-	// Add rewrites
-	for _, rewrite := range rewrites {
-		subroutes = append(subroutes, map[string]interface{}{
-			"match": []map[string]interface{}{
-				{"path": []string{rewrite.Source}},
-			},
-			"handle": []map[string]interface{}{
-				{
-					"handler": "rewrite",
-					"uri":     rewrite.Target,
+					proxyHandler := map[string]interface{}{
+						"handler":   "reverse_proxy",
+						"upstreams": []map[string]string{{"dial": dialTarget}},
+						"headers": map[string]interface{}{
+							"request": map[string]interface{}{
+								"set": map[string][]string{
+									"Host": {u.Hostname()},
+								},
+							},
+						},
+					}
+
+					if u.Scheme == "https" {
+						proxyHandler["transport"] = map[string]interface{}{
+							"protocol": "http",
+							"tls": map[string]interface{}{
+								"server_name": u.Hostname(),
+							},
+						}
+					}
+
+					subroutes = append(subroutes, map[string]interface{}{
+						"match": []map[string]interface{}{
+							{"path": []string{src}},
+						},
+						"handle": []map[string]interface{}{
+							proxyHandler,
+						},
+					})
+					continue
+				}
+			}
+
+			// Internal path rewrite
+			subroutes = append(subroutes, map[string]interface{}{
+				"match": []map[string]interface{}{
+					{"path": []string{src}},
 				},
-			},
-		})
+				"handle": []map[string]interface{}{
+					{
+						"handler": "rewrite",
+						"uri":     dst,
+					},
+				},
+			})
+		}
 	}
 
-	// Fallback reverse proxy
+	// Fallback to primary container upstream
 	subroutes = append(subroutes, map[string]interface{}{
 		"handle": []map[string]interface{}{
 			{

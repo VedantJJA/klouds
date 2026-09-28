@@ -31,17 +31,7 @@
   let loading = $state(true);
   let error = $state('');
 
-  // Deploy Service Modal State
-  let showDeployModal = $state(false);
-  let svcName = $state('');
-  let svcSourceType = $state<'git' | 'image'>('git');
-  let svcGitRepo = $state('');
-  let svcGitBranch = $state('main');
-  let svcRootDir = $state('.');
-  let svcDockerImage = $state('');
-  let svcPort = $state(80);
-  let deploying = $state(false);
-  let deployError = $state('');
+
 
   // Blueprint / Monorepo Modal State
   let showBlueprintModal = $state(false);
@@ -96,35 +86,7 @@
     }
   }
 
-  async function handleDeployService(e: SubmitEvent) {
-    e.preventDefault();
-    if (!svcName.trim() || !projectId) return;
 
-    deploying = true;
-    deployError = '';
-    try {
-      const newSvc = await api.createService({
-        project_id: projectId,
-        name: svcName.trim(),
-        source_type: svcSourceType,
-        git_repo: svcSourceType === 'git' ? svcGitRepo.trim() : undefined,
-        git_branch: svcSourceType === 'git' ? svcGitBranch.trim() : undefined,
-        root_dir: svcSourceType === 'git' ? (svcRootDir.trim() || '.') : undefined,
-        docker_image: svcSourceType === 'image' ? svcDockerImage.trim() : undefined,
-        port: Number(svcPort)
-      });
-      services = [...services, newSvc];
-      showDeployModal = false;
-      svcName = '';
-      svcGitRepo = '';
-      svcRootDir = '.';
-      svcDockerImage = '';
-    } catch (err: any) {
-      deployError = err.message || 'Failed to create service';
-    } finally {
-      deploying = false;
-    }
-  }
 
   async function handleScanRepo() {
     if (!bpRepoUrl.trim() || !projectId) return;
@@ -248,10 +210,10 @@
         <span>New Database</span>
       </button>
 
-      <button class="btn btn-primary btn-sm" onclick={() => showDeployModal = true}>
+      <a href={`/projects/${projectId}/services/new`} class="btn btn-primary btn-sm">
         <Plus size={14} />
         <span>Deploy Service</span>
-      </button>
+      </a>
     </div>
   </div>
 
@@ -299,10 +261,10 @@
             <Layers size={14} />
             <span>Deploy Blueprint / Monorepo</span>
           </button>
-          <button class="btn btn-primary btn-sm" onclick={() => showDeployModal = true}>
+          <a href={`/projects/${projectId}/services/new`} class="btn btn-primary btn-sm">
             <Plus size={14} />
             <span>Deploy Single Service</span>
-          </button>
+          </a>
         </div>
       </div>
     {:else}
@@ -577,124 +539,7 @@
   </div>
 {/if}
 
-<!-- Deploy Single Service Modal -->
-{#if showDeployModal}
-  <div class="modal-overlay" role="dialog" aria-modal="true">
-    <button type="button" class="modal-backdrop" onclick={() => showDeployModal = false} aria-label="Close modal"></button>
-    <div class="modal-content">
-      <div class="modal-header">
-        <h3>Deploy New Service</h3>
-        <button class="btn-icon" onclick={() => showDeployModal = false}>
-          <X size={16} />
-        </button>
-      </div>
 
-      <form onsubmit={handleDeployService}>
-        <div class="modal-body">
-          {#if deployError}
-            <div class="error-banner mb-3">
-              <span>{deployError}</span>
-            </div>
-          {/if}
-
-          <div class="form-group">
-            <label class="form-label" for="svc-name">Service Name</label>
-            <input
-              id="svc-name"
-              type="text"
-              class="form-input"
-              placeholder="e.g. web-app"
-              bind:value={svcName}
-              required
-            />
-          </div>
-
-          <div class="form-group">
-            <label class="form-label" for="svc-type">Source Type</label>
-            <select id="svc-type" class="form-select" bind:value={svcSourceType}>
-              <option value="git">Git Repository (Nixpacks Build)</option>
-              <option value="image">Prebuilt Docker Image</option>
-            </select>
-          </div>
-
-          {#if svcSourceType === 'git'}
-            <div class="form-group">
-              <label class="form-label" for="svc-repo">Git Repository URL</label>
-              <input
-                id="svc-repo"
-                type="text"
-                class="form-input"
-                placeholder="https://github.com/example/repo"
-                bind:value={svcGitRepo}
-                required
-              />
-            </div>
-
-            <div class="form-group">
-              <label class="form-label" for="svc-root-dir">Root Directory (Optional)</label>
-              <input
-                id="svc-root-dir"
-                type="text"
-                class="form-input"
-                placeholder="e.g. backend or apps/web (default: .)"
-                bind:value={svcRootDir}
-              />
-              <span class="text-xs text-muted">Subdirectory path for monorepos</span>
-            </div>
-
-            <div class="form-group">
-              <label class="form-label" for="svc-branch">Branch</label>
-              <input
-                id="svc-branch"
-                type="text"
-                class="form-input"
-                placeholder="main"
-                bind:value={svcGitBranch}
-              />
-            </div>
-          {:else}
-            <div class="form-group">
-              <label class="form-label" for="svc-image">Docker Image</label>
-              <input
-                id="svc-image"
-                type="text"
-                class="form-input"
-                placeholder="e.g. nginx:alpine"
-                bind:value={svcDockerImage}
-                required
-              />
-            </div>
-          {/if}
-
-          <div class="form-group">
-            <label class="form-label" for="svc-port">Internal Port</label>
-            <input
-              id="svc-port"
-              type="number"
-              class="form-input"
-              placeholder="80"
-              bind:value={svcPort}
-              required
-            />
-          </div>
-        </div>
-
-        <div class="modal-footer">
-          <button
-            type="button"
-            class="btn btn-secondary"
-            onclick={() => showDeployModal = false}
-          >
-            Cancel
-          </button>
-          <button type="submit" class="btn btn-primary" disabled={deploying}>
-            {deploying ? 'Deploying...' : 'Deploy Service'}
-          </button>
-        </div>
-      </form>
-    </div>
-  </div>
-{/if}
 
 <!-- Provision Database Modal -->
 {#if showDbModal}
