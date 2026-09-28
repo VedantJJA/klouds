@@ -2,6 +2,8 @@ package api
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"fmt"
 	"net/http"
 	"strings"
@@ -57,6 +59,7 @@ type CreateServiceRequest struct {
 	Port            int32   `json:"port"`
 	HealthCheckPath *string `json:"health_check_path"`
 	AutoDeploy      bool    `json:"auto_deploy"`
+	RuntimeVersion  string  `json:"runtime_version"`
 }
 
 // Create handles POST /api/services
@@ -153,6 +156,7 @@ func (h *ServiceHandler) Create(w http.ResponseWriter, r *http.Request) {
 		HealthCheckPath: req.HealthCheckPath,
 		AutoDeploy:      req.AutoDeploy,
 		Subdomain:       subdomain,
+		RuntimeVersion:  req.RuntimeVersion,
 		CpuLimit:        cpuLimit,
 		MemoryLimit:     memLimit,
 	})
@@ -244,6 +248,7 @@ type UpdateServiceRequest struct {
 	Port            *int32            `json:"port"`
 	HealthCheckPath *string           `json:"health_check_path"`
 	AutoDeploy      *bool             `json:"auto_deploy"`
+	RuntimeVersion  *string           `json:"runtime_version"`
 	EnvVars         map[string]string `json:"env_vars"`
 }
 
@@ -339,6 +344,11 @@ func (h *ServiceHandler) Update(w http.ResponseWriter, r *http.Request) {
 		autoDeploy = *req.AutoDeploy
 	}
 
+	runtimeVersion := svc.RuntimeVersion
+	if req.RuntimeVersion != nil {
+		runtimeVersion = strings.TrimSpace(*req.RuntimeVersion)
+	}
+
 	updatedSvc, err := h.queries.UpdateServiceSpec(r.Context(), db.UpdateServiceSpecParams{
 		ID:              svc.ID,
 		Name:            name,
@@ -353,6 +363,7 @@ func (h *ServiceHandler) Update(w http.ResponseWriter, r *http.Request) {
 		Port:            port,
 		HealthCheckPath: healthCheckPath,
 		AutoDeploy:      autoDeploy,
+		RuntimeVersion:  runtimeVersion,
 	})
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, fmt.Sprintf("failed to update service spec: %v", err))
@@ -870,6 +881,7 @@ func (h *ServiceHandler) Deploy(w http.ResponseWriter, r *http.Request) {
 				DockerfilePath: deref(svc.DockerfilePath),
 				BuildCommand:   deref(svc.BuildCommand),
 				StartCommand:   deref(svc.StartCommand),
+				RuntimeVersion: svc.RuntimeVersion,
 				EnvVars:        envVarsMap,
 			})
 			if err != nil {
@@ -896,3 +908,263 @@ func deref(s *string) string {
 	}
 	return *s
 }
+
+func randomHex(n int) string {
+	b := make([]byte, n)
+	_, _ = rand.Read(b)
+	return hex.EncodeToString(b)
+}
+
+// BatchCreateServiceItem defines an individual service in a multi-service batch creation request.
+type BatchCreateServiceItem struct {
+	Name            string            `json:"name"`
+	Type            string            `json:"type"`
+	BuildMethod     string            `json:"build_method"`
+	RepoURL         *string           `json:"repo_url"`
+	Branch          *string           `json:"branch"`
+	RootDir         string            `json:"root_dir"`
+	DockerfilePath  *string           `json:"dockerfile_path"`
+	BuildCommand    *string           `json:"build_command"`
+	StartCommand    *string           `json:"start_command"`
+	Port            int32             `json:"port"`
+	HealthCheckPath *string           `json:"health_check_path"`
+	AutoDeploy      bool              `json:"auto_deploy"`
+	RuntimeVersion  string            `json:"runtime_version"`
+	Subdomain       string            `json:"subdomain,omitempty"`
+	EnvVars         map[string]string `json:"env_vars,omitempty"`
+	RouteRules      []RouteRuleItem   `json:"route_rules,omitempty"`
+}
+
+// BatchCreateRequest is the request body for POST /api/services/batch
+type BatchCreateRequest struct {
+	ProjectID string                   `json:"project_id"`
+	Services  []BatchCreateServiceItem `json:"services"`
+	Deploy    bool                     `json:"deploy"`
+}
+
+// BatchCreateResult represents the response of creating multiple services together.
+type BatchCreateResult struct {
+	Services    []db.Service `json:"services"`
+	Deployments []string     `json:"deployments"`
+}
+
+// BatchCreate handles POST /api/services/batch
+func (h *ServiceHandler) BatchCreate(w http.ResponseWriter, r *http.Request) {
+	userID := getUserID(r.Context())
+	role := getUserRole(r.Context())
+
+	var req BatchCreateRequest
+	if err := decodeJSON(r, &req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+
+	if req.ProjectID == "" || len(req.Services) == 0 {
+		writeError(w, http.StatusBadRequest, "project_id and at least one service are required")
+		return
+	}
+
+	// Verify project access
+	project, err := h.queries.GetProjectByID(r.Context(), req.ProjectID)
+	if err != nil {
+		writeError(w, http.StatusNotFound, "project not found")
+		return
+	}
+	if role != "admin" && project.UserID != userID {
+		writeError(w, http.StatusForbidden, "access denied")
+		return
+	}
+
+	// Check quotas
+	if role != "admin" {
+		quota, err := h.queries.GetUserQuota(r.Context(), userID)
+		if err == nil && quota.MaxServices > 0 {
+			count, _ := h.queries.CountServicesByUser(r.Context(), userID)
+			if count+int64(len(req.Services)) > int64(quota.MaxServices) {
+				writeError(w, http.StatusForbidden, fmt.Sprintf("creating %d services exceeds your quota limit (%d/%d)", len(req.Services), count, quota.MaxServices))
+				return
+			}
+		}
+	}
+
+	createdServices := make([]db.Service, 0, len(req.Services))
+	deployIDs := make([]string, 0)
+
+	for _, item := range req.Services {
+		svcName := strings.TrimSpace(item.Name)
+		if svcName == "" {
+			svcName = "service-" + randomHex(3)
+		}
+
+		slug := slugify(svcName)
+		if _, err := h.queries.GetServiceBySlug(r.Context(), slug); err == nil {
+			slug = fmt.Sprintf("%s-%s", slug, randomHex(3))
+		}
+
+		subdomain := item.Subdomain
+		if subdomain == "" {
+			subdomain = slug
+		}
+
+		svcType := item.Type
+		if svcType == "" {
+			svcType = "web"
+		}
+		buildMethod := item.BuildMethod
+		if buildMethod == "" {
+			buildMethod = "nixpacks"
+		}
+		port := item.Port
+		if port <= 0 {
+			if svcType == "frontend" || svcType == "static" {
+				port = 80
+			} else {
+				port = 3000
+			}
+		}
+
+		rootDir := item.RootDir
+		if rootDir == "" {
+			rootDir = "."
+		}
+
+		cpuLimit := int32(500)
+		memLimit := int64(268435456)
+		if quota, qerr := h.queries.GetUserQuota(r.Context(), userID); qerr == nil {
+			cpuLimit = quota.CpuPerContainer
+			memLimit = quota.MemoryPerContainer
+		}
+
+		svc, err := h.queries.CreateService(r.Context(), db.CreateServiceParams{
+			ProjectID:       req.ProjectID,
+			UserID:          userID,
+			Name:            svcName,
+			Slug:            slug,
+			Type:            svcType,
+			BuildMethod:     buildMethod,
+			RepoURL:         item.RepoURL,
+			Branch:          item.Branch,
+			RootDirectory:   rootDir,
+			DockerfilePath:  item.DockerfilePath,
+			BuildCommand:    item.BuildCommand,
+			StartCommand:    item.StartCommand,
+			Port:            port,
+			HealthCheckPath: item.HealthCheckPath,
+			AutoDeploy:      item.AutoDeploy,
+			Subdomain:       subdomain,
+			RuntimeVersion:  item.RuntimeVersion,
+			CpuLimit:        cpuLimit,
+			MemoryLimit:     memLimit,
+		})
+		if err != nil {
+			log.Error().Err(err).Str("service", svcName).Msg("failed to create batch service")
+			continue
+		}
+
+		// Save Environment Variables
+		if len(item.EnvVars) > 0 {
+			for k, v := range item.EnvVars {
+				trimmedKey := strings.TrimSpace(k)
+				if trimmedKey == "" {
+					continue
+				}
+				valEnc := v
+				if h.encryptor != nil {
+					if enc, err := h.encryptor.Encrypt(v); err == nil {
+						valEnc = enc
+					}
+				}
+				_, _ = h.queries.CreateEnvVar(r.Context(), db.CreateEnvVarParams{
+					ServiceID:      svc.ID,
+					Key:            trimmedKey,
+					ValueEncrypted: valEnc,
+					IsBuildTime:    true,
+					IsLinked:       false,
+				})
+			}
+		}
+
+		// Save Route Rules (Redirects / Rewrites)
+		if len(item.RouteRules) > 0 {
+			_ = h.queries.DeleteRouteRulesByService(r.Context(), svc.ID)
+			for _, rrule := range item.RouteRules {
+				if rrule.Source == "" || rrule.Target == "" {
+					continue
+				}
+				st := rrule.Status
+				if st == 0 {
+					if rrule.Type == "rewrite" {
+						st = 200
+					} else {
+						st = 301
+					}
+				}
+				_, _ = h.queries.CreateRouteRule(r.Context(), db.CreateRouteRuleParams{
+					ServiceID: svc.ID,
+					Type:      rrule.Type,
+					Source:    rrule.Source,
+					Target:    rrule.Target,
+					Status:    &st,
+				})
+			}
+		}
+
+		createdServices = append(createdServices, svc)
+
+		// Trigger Deploy if requested
+		if req.Deploy && (item.RepoURL != nil && *item.RepoURL != "" || item.BuildMethod == "image") {
+			dep, err := h.queries.CreateDeployment(r.Context(), db.CreateDeploymentParams{
+				ServiceID: svc.ID,
+				UserID:    userID,
+				ImageTag:  fmt.Sprintf("klouds/%s:%s", svc.Slug, "initial"),
+				Trigger:   "manual",
+			})
+			if err == nil {
+				deployIDs = append(deployIDs, dep.ID)
+				_, _ = h.queries.UpdateServiceStatus(r.Context(), svc.ID, "building")
+
+				go func(targetSvc db.Service, targetDep db.Deployment, itemEnvVars map[string]string) {
+					ctx := context.Background()
+					repoURL := deref(targetSvc.RepoURL)
+					branch := deref(targetSvc.Branch)
+					if branch == "" {
+						branch = "main"
+					}
+
+					buildRes, bErr := h.engine.Build(ctx, builder.BuildOptions{
+						DeploymentID:   targetDep.ID,
+						ServiceID:      targetSvc.ID,
+						ServiceSlug:    targetSvc.Slug,
+						RepoURL:        repoURL,
+						Branch:         branch,
+						BuildMethod:    targetSvc.BuildMethod,
+						RootDir:        targetSvc.RootDirectory,
+						DockerfilePath: deref(targetSvc.DockerfilePath),
+						BuildCommand:   deref(targetSvc.BuildCommand),
+						StartCommand:   deref(targetSvc.StartCommand),
+						RuntimeVersion: targetSvc.RuntimeVersion,
+						EnvVars:        itemEnvVars,
+					})
+					if bErr != nil {
+						log.Error().Err(bErr).Str("service", targetSvc.Name).Msg("Batch build failed")
+						_, _ = h.queries.UpdateDeploymentFinished(ctx, targetDep.ID, "failed", 0)
+						return
+					}
+
+					_ = h.deployer.Deploy(ctx, builder.DeployRequest{
+						ServiceID:    targetSvc.ID,
+						DeploymentID: targetDep.ID,
+						ImageTag:     buildRes.ImageTag,
+						EnvVars:      itemEnvVars,
+					})
+				}(svc, dep, item.EnvVars)
+			}
+		}
+	}
+
+	writeJSON(w, http.StatusCreated, BatchCreateResult{
+		Services:    createdServices,
+		Deployments: deployIDs,
+	})
+}
+

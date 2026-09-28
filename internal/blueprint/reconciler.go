@@ -287,6 +287,7 @@ func (r *Reconciler) Reconcile(
 				HealthCheckPath: &healthCheckPath,
 				AutoDeploy:      autoDeploy,
 				Subdomain:       subdomain,
+				RuntimeVersion:  "",
 				CpuLimit:        500,
 				MemoryLimit:     256 * 1024 * 1024,
 			})
@@ -400,6 +401,7 @@ func (r *Reconciler) Reconcile(
 						DockerfilePath: deref(s.DockerfilePath),
 						BuildCommand:   deref(s.BuildCommand),
 						StartCommand:   deref(s.StartCommand),
+						RuntimeVersion: s.RuntimeVersion,
 						EnvVars:        envs,
 					})
 					if bErr != nil {

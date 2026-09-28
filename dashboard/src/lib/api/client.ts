@@ -56,6 +56,7 @@ export interface Service {
   image_tag?: string;
   subdomain: string;
   custom_domain?: string;
+  runtime_version?: string;
   cpu_limit: number;
   memory_limit: number;
   created_at: string;
@@ -98,6 +99,74 @@ export interface RouteRule {
   target: string;
   status?: number;
   created_at?: string;
+}
+
+export interface OAuthProvider {
+  provider: 'github' | 'gitlab' | 'bitbucket';
+  name: string;
+}
+
+export interface AdminOAuthConfig {
+  provider: string;
+  client_id: string;
+  has_secret: boolean;
+  auth_url?: string;
+  token_url?: string;
+  api_url?: string;
+  enabled: boolean;
+  updated_at: string;
+}
+
+export interface UserOAuthAccount {
+  provider: string;
+  username: string;
+  email: string;
+  avatar_url: string;
+  created_at: string;
+}
+
+export interface GitRepo {
+  id: string;
+  name: string;
+  full_name: string;
+  html_url: string;
+  clone_url: string;
+  default_branch: string;
+  private: boolean;
+  description: string;
+  provider: 'github' | 'gitlab' | 'bitbucket';
+  avatar_url?: string;
+  updated_at: string;
+}
+
+export interface BatchCreateServiceItem {
+  name: string;
+  type: string;
+  build_method: string;
+  repo_url?: string;
+  branch?: string;
+  root_dir?: string;
+  dockerfile_path?: string;
+  build_command?: string;
+  start_command?: string;
+  port?: number;
+  health_check_path?: string;
+  auto_deploy?: boolean;
+  runtime_version?: string;
+  subdomain?: string;
+  env_vars?: Record<string, string>;
+  route_rules?: RouteRule[];
+}
+
+export interface BatchCreateRequest {
+  project_id: string;
+  services: BatchCreateServiceItem[];
+  deploy?: boolean;
+}
+
+export interface BatchCreateResult {
+  services: Service[];
+  deployments: string[];
 }
 
 export interface DetectionResult {
@@ -457,6 +526,54 @@ class ApiClient {
 
   async getSystemMetrics(): Promise<SystemMetrics> {
     return this.request('/api/admin/metrics/system');
+  }
+
+  // OAuth & Git Integration
+  async getOAuthProviders(): Promise<OAuthProvider[]> {
+    return this.request('/api/auth/oauth/providers');
+  }
+
+  async getAdminOAuthConfigs(): Promise<AdminOAuthConfig[]> {
+    return this.request('/api/admin/oauth');
+  }
+
+  async updateAdminOAuthConfig(provider: string, config: {
+    client_id: string;
+    client_secret?: string;
+    auth_url?: string;
+    token_url?: string;
+    api_url?: string;
+    enabled: boolean;
+  }): Promise<{ status: string }> {
+    return this.request(`/api/admin/oauth/${provider}`, {
+      method: 'PUT',
+      body: JSON.stringify(config)
+    });
+  }
+
+  async getUserOAuthAccounts(): Promise<UserOAuthAccount[]> {
+    return this.request('/api/user/oauth');
+  }
+
+  async disconnectOAuthAccount(provider: string): Promise<{ status: string }> {
+    return this.request(`/api/user/oauth/${provider}`, {
+      method: 'DELETE'
+    });
+  }
+
+  async getGitRepos(): Promise<{ repos: GitRepo[]; connected_providers: string[]; message?: string }> {
+    return this.request('/api/git/repos');
+  }
+
+  async getGitBranches(repoUrl: string): Promise<string[]> {
+    return this.request(`/api/git/branches?repo_url=${encodeURIComponent(repoUrl)}`);
+  }
+
+  async createBatchServices(req: BatchCreateRequest): Promise<BatchCreateResult> {
+    return this.request('/api/services/batch', {
+      method: 'POST',
+      body: JSON.stringify(req)
+    });
   }
 }
 

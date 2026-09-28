@@ -294,6 +294,7 @@ func (h *Handler) triggerServiceDeployment(ctx context.Context, svc db.Service, 
 			BuildMethod:    svc.BuildMethod,
 			RootDir:        svc.RootDirectory,
 			DockerfilePath: df,
+			RuntimeVersion: svc.RuntimeVersion,
 			EnvVars:        nil,
 		})
 

@@ -63,6 +63,30 @@ function createAuthStore() {
       }
       return res;
     },
+    loginWithToken: async (token: string, redirectUrl?: string) => {
+      setAuthToken(token);
+      update(s => ({ ...s, token, loading: true }));
+      try {
+        const res = await api.me();
+        update(s => ({
+          ...s,
+          user: res.user,
+          quota: res.quota || null,
+          loading: false,
+          initialized: true
+        }));
+        if (res.user.status === 'pending') {
+          goto('/access/pending');
+        } else if (redirectUrl && !redirectUrl.includes('://')) {
+          goto(redirectUrl);
+        } else {
+          goto('/');
+        }
+      } catch {
+        clearAuthToken();
+        update(s => ({ ...s, user: null, quota: null, token: null, loading: false, initialized: true }));
+      }
+    },
     register: async (data: { email: string; username: string; password: string }) => {
       const res = await api.register(data);
       setAuthToken(res.token);

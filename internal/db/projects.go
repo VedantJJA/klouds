@@ -123,6 +123,7 @@ type CreateServiceParams struct {
 	HealthCheckPath *string
 	AutoDeploy      bool
 	Subdomain       string
+	RuntimeVersion  string
 	CpuLimit        int32
 	MemoryLimit     int64
 }
@@ -136,15 +137,15 @@ func (q *Queries) CreateService(ctx context.Context, arg CreateServiceParams) (S
 		`INSERT INTO services (
 			project_id, user_id, name, slug, type, build_method,
 			repo_url, branch, root_directory, dockerfile_path, build_command, start_command,
-			port, health_check_path, auto_deploy, subdomain, cpu_limit, memory_limit
-		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18)
+			port, health_check_path, auto_deploy, subdomain, runtime_version, cpu_limit, memory_limit
+		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19)
 		RETURNING id, project_id, user_id, name, slug, type, status, build_method,
 			repo_url, branch, root_directory, dockerfile_path, build_command, start_command,
 			port, health_check_path, auto_deploy, container_id, image_tag,
-			subdomain, cpu_limit, memory_limit, created_at, updated_at`,
+			subdomain, COALESCE(runtime_version, ''), cpu_limit, memory_limit, created_at, updated_at`,
 		arg.ProjectID, arg.UserID, arg.Name, arg.Slug, arg.Type, arg.BuildMethod,
 		arg.RepoURL, arg.Branch, rootDir, arg.DockerfilePath, arg.BuildCommand, arg.StartCommand,
-		arg.Port, arg.HealthCheckPath, arg.AutoDeploy, arg.Subdomain, arg.CpuLimit, arg.MemoryLimit,
+		arg.Port, arg.HealthCheckPath, arg.AutoDeploy, arg.Subdomain, arg.RuntimeVersion, arg.CpuLimit, arg.MemoryLimit,
 	)
 	return scanService(row)
 }
@@ -154,7 +155,7 @@ func (q *Queries) GetServiceByID(ctx context.Context, id string) (Service, error
 		`SELECT id, project_id, user_id, name, slug, type, status, build_method,
 			repo_url, branch, root_directory, dockerfile_path, build_command, start_command,
 			port, health_check_path, auto_deploy, container_id, image_tag,
-			subdomain, cpu_limit, memory_limit, created_at, updated_at
+			subdomain, COALESCE(runtime_version, ''), cpu_limit, memory_limit, created_at, updated_at
 		 FROM services WHERE id = $1`, id)
 	return scanService(row)
 }
@@ -164,7 +165,7 @@ func (q *Queries) GetServiceBySlug(ctx context.Context, slug string) (Service, e
 		`SELECT id, project_id, user_id, name, slug, type, status, build_method,
 			repo_url, branch, root_directory, dockerfile_path, build_command, start_command,
 			port, health_check_path, auto_deploy, container_id, image_tag,
-			subdomain, cpu_limit, memory_limit, created_at, updated_at
+			subdomain, COALESCE(runtime_version, ''), cpu_limit, memory_limit, created_at, updated_at
 		 FROM services WHERE slug = $1`, slug)
 	return scanService(row)
 }
@@ -174,7 +175,7 @@ func (q *Queries) ListServicesByProject(ctx context.Context, projectID string) (
 		`SELECT id, project_id, user_id, name, slug, type, status, build_method,
 			repo_url, branch, root_directory, dockerfile_path, build_command, start_command,
 			port, health_check_path, auto_deploy, container_id, image_tag,
-			subdomain, cpu_limit, memory_limit, created_at, updated_at
+			subdomain, COALESCE(runtime_version, ''), cpu_limit, memory_limit, created_at, updated_at
 		 FROM services WHERE project_id = $1 ORDER BY created_at DESC`, projectID)
 	if err != nil {
 		return nil, err
@@ -188,7 +189,7 @@ func (q *Queries) ListServicesByUser(ctx context.Context, userID string) ([]Serv
 		`SELECT id, project_id, user_id, name, slug, type, status, build_method,
 			repo_url, branch, root_directory, dockerfile_path, build_command, start_command,
 			port, health_check_path, auto_deploy, container_id, image_tag,
-			subdomain, cpu_limit, memory_limit, created_at, updated_at
+			subdomain, COALESCE(runtime_version, ''), cpu_limit, memory_limit, created_at, updated_at
 		 FROM services WHERE user_id = $1 ORDER BY created_at DESC`, userID)
 	if err != nil {
 		return nil, err
@@ -202,7 +203,7 @@ func (q *Queries) ListServicesByRepoURL(ctx context.Context, repoURL string) ([]
 		`SELECT id, project_id, user_id, name, slug, type, status, build_method,
 			repo_url, branch, root_directory, dockerfile_path, build_command, start_command,
 			port, health_check_path, auto_deploy, container_id, image_tag,
-			subdomain, cpu_limit, memory_limit, created_at, updated_at
+			subdomain, COALESCE(runtime_version, ''), cpu_limit, memory_limit, created_at, updated_at
 		 FROM services WHERE repo_url = $1 ORDER BY created_at DESC`, repoURL)
 	if err != nil {
 		return nil, err
@@ -216,7 +217,7 @@ func (q *Queries) ListAllServices(ctx context.Context) ([]Service, error) {
 		`SELECT id, project_id, user_id, name, slug, type, status, build_method,
 			repo_url, branch, root_directory, dockerfile_path, build_command, start_command,
 			port, health_check_path, auto_deploy, container_id, image_tag,
-			subdomain, cpu_limit, memory_limit, created_at, updated_at
+			subdomain, COALESCE(runtime_version, ''), cpu_limit, memory_limit, created_at, updated_at
 		 FROM services ORDER BY created_at DESC`)
 	if err != nil {
 		return nil, err
@@ -232,7 +233,7 @@ func (q *Queries) UpdateServiceStatus(ctx context.Context, id string, status str
 		 RETURNING id, project_id, user_id, name, slug, type, status, build_method,
 			repo_url, branch, root_directory, dockerfile_path, build_command, start_command,
 			port, health_check_path, auto_deploy, container_id, image_tag,
-			subdomain, cpu_limit, memory_limit, created_at, updated_at`,
+			subdomain, COALESCE(runtime_version, ''), cpu_limit, memory_limit, created_at, updated_at`,
 		id, status)
 	return scanService(row)
 }
@@ -244,7 +245,7 @@ func (q *Queries) UpdateServiceContainer(ctx context.Context, id string, contain
 		 RETURNING id, project_id, user_id, name, slug, type, status, build_method,
 			repo_url, branch, root_directory, dockerfile_path, build_command, start_command,
 			port, health_check_path, auto_deploy, container_id, image_tag,
-			subdomain, cpu_limit, memory_limit, created_at, updated_at`,
+			subdomain, COALESCE(runtime_version, ''), cpu_limit, memory_limit, created_at, updated_at`,
 		id, containerID, imageTag, status)
 	return scanService(row)
 }
@@ -263,6 +264,7 @@ type UpdateServiceSpecParams struct {
 	Port            int32   `json:"port"`
 	HealthCheckPath *string `json:"health_check_path"`
 	AutoDeploy      bool    `json:"auto_deploy"`
+	RuntimeVersion  string  `json:"runtime_version"`
 }
 
 func (q *Queries) UpdateServiceSpec(ctx context.Context, arg UpdateServiceSpecParams) (Service, error) {
@@ -270,15 +272,15 @@ func (q *Queries) UpdateServiceSpec(ctx context.Context, arg UpdateServiceSpecPa
 		`UPDATE services SET
 			name = $2, type = $3, build_method = $4, repo_url = $5, branch = $6,
 			root_directory = $7, dockerfile_path = $8, build_command = $9, start_command = $10,
-			port = $11, health_check_path = $12, auto_deploy = $13, updated_at = NOW()
+			port = $11, health_check_path = $12, auto_deploy = $13, runtime_version = $14, updated_at = NOW()
 		 WHERE id = $1
 		 RETURNING id, project_id, user_id, name, slug, type, status, build_method,
 			repo_url, branch, root_directory, dockerfile_path, build_command, start_command,
 			port, health_check_path, auto_deploy, container_id, image_tag,
-			subdomain, cpu_limit, memory_limit, created_at, updated_at`,
+			subdomain, COALESCE(runtime_version, ''), cpu_limit, memory_limit, created_at, updated_at`,
 		arg.ID, arg.Name, arg.Type, arg.BuildMethod, arg.RepoURL, arg.Branch,
 		arg.RootDirectory, arg.DockerfilePath, arg.BuildCommand, arg.StartCommand,
-		arg.Port, arg.HealthCheckPath, arg.AutoDeploy)
+		arg.Port, arg.HealthCheckPath, arg.AutoDeploy, arg.RuntimeVersion)
 	return scanService(row)
 }
 
@@ -302,7 +304,7 @@ func scanService(row interface{ Scan(dest ...interface{}) error }) (Service, err
 		&s.ID, &s.ProjectID, &s.UserID, &s.Name, &s.Slug, &s.Type, &s.Status, &s.BuildMethod,
 		&s.RepoURL, &s.Branch, &s.RootDirectory, &s.DockerfilePath, &s.BuildCommand, &s.StartCommand,
 		&s.Port, &s.HealthCheckPath, &s.AutoDeploy, &s.ContainerID, &s.ImageTag,
-		&s.Subdomain, &s.CpuLimit, &s.MemoryLimit, &s.CreatedAt, &s.UpdatedAt,
+		&s.Subdomain, &s.RuntimeVersion, &s.CpuLimit, &s.MemoryLimit, &s.CreatedAt, &s.UpdatedAt,
 	)
 	return s, err
 }

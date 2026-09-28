@@ -104,6 +104,8 @@ func main() {
 		Deployer:   deployer,
 		Domain:     cfg.Domain,
 		DataDir:    cfg.DataDir,
+		SecretKey:  cfg.SecretKey,
+		BaseURL:    cfg.BaseURL,
 	})
 
 	// Create HTTP server

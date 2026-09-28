@@ -28,6 +28,8 @@ type RouterConfig struct {
 	Deployer   *builder.Deployer
 	Domain     string
 	DataDir    string
+	SecretKey  string
+	BaseURL    string
 }
 
 // NewRouter creates the main API router with all routes.
@@ -64,12 +66,16 @@ func NewRouter(cfg RouterConfig) *chi.Mux {
 	metricsHandler := NewMetricsHandler()
 	webhookHandler := webhook.NewHandler(cfg.Pool, cfg.Engine, cfg.Deployer)
 	blueprintHandler := NewBlueprintHandler(cfg.Pool, cfg.DataDir, cfg.Encryptor, cfg.Containers, cfg.Engine, cfg.Deployer, cfg.Domain)
+	oauthHandler := NewOAuthHandler(cfg.Pool, cfg.TokenSvc, cfg.Encryptor, cfg.SecretKey, cfg.BaseURL)
 
 	r.Route("/api", func(r chi.Router) {
 		// --- Public routes (no auth) ---
 		r.Route("/auth", func(r chi.Router) {
 			r.Post("/register", authHandler.Register)
 			r.Post("/login", authHandler.Login)
+			r.Get("/oauth/providers", oauthHandler.GetEnabledProviders)
+			r.Get("/oauth/{provider}/login", oauthHandler.InitiateLogin)
+			r.Get("/oauth/{provider}/callback", oauthHandler.HandleCallback)
 		})
 
 		// Git Webhooks (public with signature verification)
@@ -127,6 +133,7 @@ func NewRouter(cfg RouterConfig) *chi.Mux {
 
 			// Services
 			r.Post("/services", serviceHandler.Create)
+			r.Post("/services/batch", serviceHandler.BatchCreate)
 			r.Get("/services", serviceHandler.List)
 			r.Get("/services/{serviceID}", serviceHandler.Get)
 			r.Put("/services/{serviceID}", serviceHandler.Update)
@@ -148,6 +155,15 @@ func NewRouter(cfg RouterConfig) *chi.Mux {
 			r.Get("/databases/{databaseID}/connection", dbHandler.ConnectionInfo)
 			r.Delete("/databases/{databaseID}", dbHandler.Delete)
 
+			// User Git & OAuth Accounts
+			r.Get("/user/oauth", oauthHandler.GetUserOAuthAccounts)
+			r.Get("/user/oauth/{provider}/connect", oauthHandler.InitiateConnect)
+			r.Delete("/user/oauth/{provider}", oauthHandler.DisconnectOAuthAccount)
+
+			// Git Repositories & Branches (auto aggregated across connected providers)
+			r.Get("/git/repos", oauthHandler.ListRepositories)
+			r.Get("/git/branches", oauthHandler.ListBranches)
+
 			// --- Admin routes ---
 			r.Route("/admin", func(r chi.Router) {
 				r.Use(AdminOnly)
@@ -166,6 +182,10 @@ func NewRouter(cfg RouterConfig) *chi.Mux {
 
 				// System metrics
 				r.Get("/metrics/system", metricsHandler.GetSystemMetrics)
+
+				// Admin OAuth App configuration
+				r.Get("/oauth", oauthHandler.GetProviderConfigs)
+				r.Put("/oauth/{provider}", oauthHandler.UpdateProviderConfig)
 			})
 		})
 	})

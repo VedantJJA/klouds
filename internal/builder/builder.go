@@ -46,6 +46,7 @@ type BuildOptions struct {
 	DockerfilePath string
 	BuildCommand   string
 	StartCommand   string
+	RuntimeVersion string
 	EnvVars        map[string]string
 }
 
@@ -186,6 +187,29 @@ func (e *Engine) Build(ctx context.Context, opts BuildOptions) (*BuildResult, er
 		for k, v := range opts.EnvVars {
 			effectiveEnvVars[k] = v
 		}
+
+		// Inject selected runtime version into Nixpacks configuration
+		if opts.RuntimeVersion != "" {
+			v := strings.TrimSpace(opts.RuntimeVersion)
+			if fileExists(filepath.Join(buildDir, "package.json")) {
+				effectiveEnvVars["NIXPACKS_NODE_VERSION"] = v
+			} else if fileExists(filepath.Join(buildDir, "requirements.txt")) || fileExists(filepath.Join(buildDir, "Pipfile")) || fileExists(filepath.Join(buildDir, "pyproject.toml")) {
+				effectiveEnvVars["NIXPACKS_PYTHON_VERSION"] = v
+			} else if fileExists(filepath.Join(buildDir, "go.mod")) {
+				effectiveEnvVars["NIXPACKS_GO_VERSION"] = v
+			} else if fileExists(filepath.Join(buildDir, "composer.json")) {
+				effectiveEnvVars["NIXPACKS_PHP_VERSION"] = v
+			} else if fileExists(filepath.Join(buildDir, "Gemfile")) {
+				effectiveEnvVars["NIXPACKS_RUBY_VERSION"] = v
+			} else if fileExists(filepath.Join(buildDir, "pom.xml")) || fileExists(filepath.Join(buildDir, "build.gradle")) {
+				effectiveEnvVars["NIXPACKS_JDK_VERSION"] = v
+			} else if fileExists(filepath.Join(buildDir, "Cargo.toml")) {
+				effectiveEnvVars["NIXPACKS_RUST_VERSION"] = v
+			} else {
+				effectiveEnvVars["NIXPACKS_NODE_VERSION"] = v
+			}
+		}
+
 		var installCmd string
 		if fileExists(filepath.Join(buildDir, "package.json")) {
 			if _, ok := effectiveEnvVars["NIXPACKS_NODE_VERSION"]; !ok {

@@ -13,7 +13,9 @@
     LogOut,
     Sun,
     Moon,
-    X
+    X,
+    Key,
+    GitBranch
   } from '@lucide/svelte';
 
   const pathname = $derived($page.url.pathname);
@@ -73,6 +75,18 @@
       <span>Databases</span>
     </a>
 
+    <a
+      href="/settings"
+      class="nav-item"
+      class:active={isLinkActive('/settings')}
+      onclick={closeMobileNav}
+    >
+      <span class="nav-item-icon">
+        <GitBranch size={18} />
+      </span>
+      <span>Git Accounts</span>
+    </a>
+
     {#if $isAdmin}
       <div class="sidebar-section-label">Admin Console</div>
       <a
@@ -109,6 +123,18 @@
           <Activity size={18} />
         </span>
         <span>VM Telemetry</span>
+      </a>
+
+      <a
+        href="/admin/oauth"
+        class="nav-item"
+        class:active={isLinkActive('/admin/oauth')}
+        onclick={closeMobileNav}
+      >
+        <span class="nav-item-icon">
+          <Key size={18} />
+        </span>
+        <span>Git OAuth Apps</span>
       </a>
     {/if}
   </nav>

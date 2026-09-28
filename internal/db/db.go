@@ -120,6 +120,7 @@ type Service struct {
 	ContainerID     *string   `json:"container_id"`
 	ImageTag        *string   `json:"image_tag"`
 	Subdomain       string    `json:"subdomain"`
+	RuntimeVersion  string    `json:"runtime_version"`
 	CpuLimit        int32     `json:"cpu_limit"`
 	MemoryLimit     int64     `json:"memory_limit"`
 	CreatedAt       time.Time `json:"created_at"`
@@ -185,3 +186,32 @@ type RouteRule struct {
 	Status    *int32    `json:"status"`
 	CreatedAt time.Time `json:"created_at"`
 }
+
+type OAuthProviderConfig struct {
+	Provider              string    `json:"provider"`
+	ClientID              string    `json:"client_id"`
+	ClientSecretEncrypted string    `json:"-"`
+	AuthURL               *string   `json:"auth_url,omitempty"`
+	TokenURL              *string   `json:"token_url,omitempty"`
+	APIURL                *string   `json:"api_url,omitempty"`
+	Enabled               bool      `json:"enabled"`
+	CreatedAt             time.Time `json:"created_at"`
+	UpdatedAt             time.Time `json:"updated_at"`
+}
+
+type UserOAuthAccount struct {
+	ID                     string     `json:"id"`
+	UserID                 string     `json:"user_id"`
+	Provider               string     `json:"provider"`
+	ProviderUserID         string     `json:"provider_user_id"`
+	ProviderUsername       string     `json:"provider_username"`
+	ProviderEmail          string     `json:"provider_email"`
+	AvatarURL              string     `json:"avatar_url"`
+	AccessTokenEncrypted   string     `json:"-"`
+	RefreshTokenEncrypted  *string    `json:"-"`
+	TokenExpiresAt         *time.Time `json:"token_expires_at,omitempty"`
+	Scopes                 []string   `json:"scopes"`
+	CreatedAt              time.Time  `json:"created_at"`
+	UpdatedAt              time.Time  `json:"updated_at"`
+}
+
