@@ -97,9 +97,18 @@ func ParseBlueprint(data []byte) (*Blueprint, error) {
 			svc.Name = name
 		}
 
-		// Normalize type (Render uses "pserv" for private service)
+		// Normalize type (Render uses "pserv" for private service, and supports "redis")
 		if typ, ok := rawSvc["type"].(string); ok {
-			switch strings.ToLower(typ) {
+			lowerType := strings.ToLower(typ)
+			if lowerType == "redis" || lowerType == "cache" || lowerType == "redis-cache" {
+				bp.Databases = append(bp.Databases, DatabaseDefinition{
+					Name:    svc.Name,
+					Engine:  "redis",
+					Version: "7-alpine",
+				})
+				continue
+			}
+			switch lowerType {
 			case "pserv", "private":
 				svc.Type = "private"
 			case "worker":
@@ -359,7 +368,7 @@ func ParseBlueprint(data []byte) (*Blueprint, error) {
 				db.Engine = "postgresql"
 			case "mysql":
 				db.Engine = "mysql"
-			case "redis":
+			case "redis", "cache", "redis-cache", "valkey":
 				db.Engine = "redis"
 			case "mongo", "mongodb":
 				db.Engine = "mongodb"
@@ -372,7 +381,16 @@ func ParseBlueprint(data []byte) (*Blueprint, error) {
 		if ver, ok := rawDb["version"].(string); ok {
 			db.Version = ver
 		} else {
-			db.Version = "16"
+			switch db.Engine {
+			case "redis":
+				db.Version = "7-alpine"
+			case "mysql":
+				db.Version = "8.0"
+			case "mongodb":
+				db.Version = "7"
+			default:
+				db.Version = "16"
+			}
 		}
 		if dbName, ok := rawDb["databaseName"].(string); ok {
 			db.DatabaseName = dbName

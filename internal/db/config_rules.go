@@ -115,3 +115,8 @@ func (q *Queries) DeleteRouteRule(ctx context.Context, id string) error {
 	_, err := q.db.Exec(ctx, `DELETE FROM route_rules WHERE id = $1`, id)
 	return err
 }
+
+func (q *Queries) DeleteRouteRulesByService(ctx context.Context, serviceID string) error {
+	_, err := q.db.Exec(ctx, `DELETE FROM route_rules WHERE service_id = $1`, serviceID)
+	return err
+}

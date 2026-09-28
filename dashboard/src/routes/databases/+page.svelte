@@ -18,6 +18,19 @@
   let provisioning = $state(false);
   let provisionError = $state('');
 
+  function onEngineChange(newEngine: 'postgresql' | 'postgres' | 'redis' | 'mongodb' | 'mysql') {
+    engine = newEngine;
+    if (newEngine === 'redis') {
+      version = '7-alpine';
+    } else if (newEngine === 'mysql') {
+      version = '8.0';
+    } else if (newEngine === 'mongodb') {
+      version = '7';
+    } else {
+      version = '16';
+    }
+  }
+
   async function loadData() {
     loading = true;
     error = '';
@@ -215,24 +228,40 @@
 
           <div class="form-group">
             <label class="form-label" for="db-engine-select">Database Engine</label>
-            <select id="db-engine-select" class="form-select" bind:value={engine}>
+            <select
+              id="db-engine-select"
+              class="form-select"
+              value={engine}
+              onchange={(e) => onEngineChange(e.currentTarget.value as any)}
+            >
               <option value="postgresql">PostgreSQL</option>
-              <option value="redis">Redis</option>
+              <option value="redis">Redis (In-Memory Cache & Key-Value)</option>
               <option value="mongodb">MongoDB</option>
               <option value="mysql">MySQL</option>
             </select>
           </div>
 
           <div class="form-group">
-            <label class="form-label" for="db-ver-input">Version</label>
+            <label class="form-label" for="db-ver-input">Version / Image Tag</label>
             <input
               id="db-ver-input"
               type="text"
               class="form-input"
-              placeholder="16"
+              placeholder={engine === 'redis' ? '7-alpine' : (engine === 'mysql' ? '8.0' : (engine === 'mongodb' ? '7' : '16'))}
               bind:value={version}
               required
             />
+            <p class="text-xs text-muted" style="margin-top: 4px;">
+              {#if engine === 'redis'}
+                Recommended: <code>7-alpine</code> (Ultra-light, persistence & password auth enabled)
+              {:else if engine === 'mongodb'}
+                Recommended: <code>7</code> or <code>6</code>
+              {:else if engine === 'mysql'}
+                Recommended: <code>8.0</code>
+              {:else}
+                Recommended: <code>16</code> or <code>15</code>
+              {/if}
+            </p>
           </div>
         </div>
 

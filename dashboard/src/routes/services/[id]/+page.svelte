@@ -2,7 +2,7 @@
   import { onMount, onDestroy } from 'svelte';
   import { page } from '$app/stores';
   import { goto } from '$app/navigation';
-  import { api, type Service, type Deployment, type Project } from '$lib/api/client';
+  import { api, type Service, type Deployment, type Project, type RouteRule } from '$lib/api/client';
   import Breadcrumbs from '$lib/components/common/Breadcrumbs.svelte';
   import {
     Server,
@@ -31,7 +31,9 @@
     Settings,
     Key,
     RefreshCw,
-    ArrowRight
+    ArrowRight,
+    Repeat,
+    CornerDownRight
   } from '@lucide/svelte';
 
   const serviceId = $derived($page.params.id || '');
@@ -39,7 +41,7 @@
   let service = $state<Service | null>(null);
   let parentProject = $state<Project | null>(null);
   let deployments = $state<Deployment[]>([]);
-  let activeTab = $state<'overview' | 'deployments' | 'logs' | 'environment' | 'settings'>('overview');
+  let activeTab = $state<'overview' | 'deployments' | 'logs' | 'environment' | 'routes' | 'settings'>('overview');
   let selectedDeployment = $state<Deployment | null>(null);
   let loading = $state(true);
   let actionLoading = $state(false);
@@ -145,6 +147,86 @@
       }
     } catch {
       // Env vars loading error non-fatal
+    }
+  }
+
+  // Route rules (redirects & rewrites)
+  let routeRules = $state<Array<{ id?: string; type: 'redirect' | 'rewrite'; source: string; target: string; status: number }>>([]);
+  let routesDirty = $state(false);
+  let routesSaving = $state(false);
+  let routesSuccess = $state('');
+  let routesError = $state('');
+
+  async function loadRouteRules() {
+    if (!serviceId) return;
+    try {
+      const rules = await api.getServiceRoutes(serviceId);
+      if (Array.isArray(rules)) {
+        routeRules = rules.map(r => ({
+          id: r.id,
+          type: r.type || 'redirect',
+          source: r.source || '',
+          target: r.target || '',
+          status: r.status || 301
+        }));
+        routesDirty = false;
+      }
+    } catch {
+      // Route rules loading error non-fatal
+    }
+  }
+
+  function addRouteRule(type: 'redirect' | 'rewrite' = 'redirect', source = '', target = '', status = 301) {
+    routesDirty = true;
+    routeRules = [
+      ...routeRules,
+      { type, source, target, status }
+    ];
+  }
+
+  function removeRouteRule(index: number) {
+    routesDirty = true;
+    routeRules = routeRules.filter((_, i) => i !== index);
+  }
+
+  function applyPresetRule(preset: 'spa' | '301' | '302' | 'api') {
+    routesDirty = true;
+    if (preset === 'spa') {
+      routeRules = [...routeRules, { type: 'rewrite', source: '/*', target: '/index.html', status: 301 }];
+    } else if (preset === '301') {
+      routeRules = [...routeRules, { type: 'redirect', source: '/old-path/*', target: '/new-path/*', status: 301 }];
+    } else if (preset === '302') {
+      routeRules = [...routeRules, { type: 'redirect', source: '/promo', target: '/campaign', status: 302 }];
+    } else if (preset === 'api') {
+      routeRules = [...routeRules, { type: 'rewrite', source: '/api/v1/*', target: '/api/v2/*', status: 301 }];
+    }
+  }
+
+  async function saveRouteRules() {
+    if (!serviceId) return;
+    routesSaving = true;
+    routesSuccess = '';
+    routesError = '';
+    try {
+      for (const r of routeRules) {
+        if (!r.source.trim() || !r.target.trim()) {
+          throw new Error('All rules must specify both a source path and target destination.');
+        }
+      }
+      const payload: RouteRule[] = routeRules.map(r => ({
+        type: r.type,
+        source: r.source.trim(),
+        target: r.target.trim(),
+        status: r.type === 'redirect' ? Number(r.status) || 301 : undefined
+      }));
+      await api.setServiceRoutes(serviceId, payload);
+      routesDirty = false;
+      routesSuccess = 'Routing rules saved and applied live to Caddy edge router!';
+      setTimeout(() => { routesSuccess = ''; }, 4500);
+    } catch (err: any) {
+      routesError = err.message || 'Failed to save routing rules';
+    } finally {
+      routesSaving = false;
     }
   }
 
@@ -374,6 +456,7 @@
   onMount(() => {
     loadServiceData();
     loadEnvVars();
+    loadRouteRules();
   });
 
   onDestroy(() => {
@@ -552,6 +635,15 @@
     >
       <Key size={14} />
       <span>Environment Variables ({envVars.length})</span>
+    </button>
+
+    <button
+      class="tab-btn"
+      class:active={activeTab === 'routes'}
+      onclick={() => activeTab = 'routes'}
+    >
+      <Repeat size={14} />
+      <span>Redirects & Rewrites ({routeRules.length})</span>
     </button>
 
     <button
@@ -958,6 +1050,250 @@
           >
             <Rocket size={13} />
             <span>{envSaving ? 'Deploying...' : 'Save & Redeploy'}</span>
+          </button>
+        </div>
+      </div>
+    </div>
+  {/if}
+
+  <!-- Tab: Redirects & Rewrites -->
+  {#if activeTab === 'routes'}
+    <div class="card">
+      <div class="card-header" style="flex-wrap: wrap; gap: 1rem;">
+        <div>
+          <div style="display: flex; align-items: center; gap: 0.5rem;">
+            <h3>Redirects & Path Rewrites</h3>
+            <span class="badge" style="background: rgba(99, 102, 241, 0.15); color: #818cf8; font-size: 0.72rem; font-weight: 600;">
+              Caddy Edge Engine
+            </span>
+          </div>
+          <p class="text-xs text-muted" style="margin: 4px 0 0 0;">
+            Define HTTP redirects (301/302) and internal URL rewrites. Changes update Caddy in real-time without restarting your service.
+          </p>
+        </div>
+
+        <div style="display: flex; gap: 0.5rem; align-items: center;">
+          <button
+            type="button"
+            class="btn btn-secondary btn-sm"
+            onclick={() => addRouteRule('redirect', '', '', 301)}
+          >
+            <Plus size={13} />
+            <span>Add Rule</span>
+          </button>
+
+          <button
+            type="button"
+            class="btn btn-primary btn-sm"
+            onclick={saveRouteRules}
+            disabled={routesSaving}
+          >
+            <Save size={13} />
+            <span>{routesSaving ? 'Applying...' : 'Save & Apply Live'}</span>
+          </button>
+        </div>
+      </div>
+
+      <!-- Live Edge Banner -->
+      {#if service.subdomain}
+        <div style="margin-bottom: 1.25rem; padding: 0.75rem 1rem; border-radius: var(--radius-md); background: rgba(52, 211, 153, 0.08); border: 1px solid rgba(52, 211, 153, 0.2); display: flex; align-items: center; justify-content: space-between; gap: 1rem; flex-wrap: wrap;">
+          <div style="display: flex; align-items: center; gap: 0.65rem; font-size: 0.8rem; color: #a7f3d0;">
+            <ShieldCheck size={16} style="color: var(--color-success);" />
+            <span>
+              Connected to <strong>https://{service.subdomain}.klouds.online</strong> via Caddy. Dynamic route rules are evaluated at index 0 before standard reverse proxy.
+            </span>
+          </div>
+        </div>
+      {/if}
+
+      <!-- Presets Quick Bar -->
+      <div style="margin-bottom: 1.25rem; display: flex; align-items: center; flex-wrap: wrap; gap: 0.5rem;">
+        <span class="text-xs text-muted" style="font-weight: 600; margin-right: 0.25rem;">Quick Presets:</span>
+        <button
+          type="button"
+          class="badge"
+          style="cursor: pointer; background: rgba(255, 255, 255, 0.05); border: 1px solid rgba(255, 255, 255, 0.1); color: var(--color-ink); padding: 5px 10px; font-size: 0.72rem;"
+          onclick={() => applyPresetRule('spa')}
+          title="Route all unhandled paths to index.html for Single Page Applications (React, Vue, SvelteKit, Vite)"
+        >
+          SPA Fallback (/* → /index.html)
+        </button>
+        <button
+          type="button"
+          class="badge"
+          style="cursor: pointer; background: rgba(255, 255, 255, 0.05); border: 1px solid rgba(255, 255, 255, 0.1); color: var(--color-ink); padding: 5px 10px; font-size: 0.72rem;"
+          onclick={() => applyPresetRule('301')}
+          title="Permanent redirect from old path pattern to new path pattern"
+        >
+          Permanent 301 (/old/* → /new/*)
+        </button>
+        <button
+          type="button"
+          class="badge"
+          style="cursor: pointer; background: rgba(255, 255, 255, 0.05); border: 1px solid rgba(255, 255, 255, 0.1); color: var(--color-ink); padding: 5px 10px; font-size: 0.72rem;"
+          onclick={() => applyPresetRule('302')}
+          title="Temporary redirect for marketing or maintenance"
+        >
+          Temporary 302 (/promo → /campaign)
+        </button>
+        <button
+          type="button"
+          class="badge"
+          style="cursor: pointer; background: rgba(255, 255, 255, 0.05); border: 1px solid rgba(255, 255, 255, 0.1); color: var(--color-ink); padding: 5px 10px; font-size: 0.72rem;"
+          onclick={() => applyPresetRule('api')}
+          title="Internal rewrite from API v1 to v2"
+        >
+          API Rewrite (/api/v1/* → /api/v2/*)
+        </button>
+      </div>
+
+      {#if routesSuccess}
+        <div class="card text-success p-3 mb-3" style="background: rgba(52, 211, 153, 0.1); border-color: rgba(52, 211, 153, 0.3); font-size: 0.85rem; display: flex; align-items: center; gap: 0.5rem;">
+          <Check size={16} />
+          <span>{routesSuccess}</span>
+        </div>
+      {/if}
+
+      {#if routesError}
+        <div class="card text-danger p-3 mb-3" style="background: rgba(239, 68, 68, 0.1); border-color: rgba(239, 68, 68, 0.3); font-size: 0.85rem; display: flex; align-items: center; gap: 0.5rem;">
+          <AlertCircle size={16} />
+          <span>{routesError}</span>
+        </div>
+      {/if}
+
+      <!-- Rules List -->
+      {#if routeRules.length === 0}
+        <div style="padding: 2.5rem 1rem; text-align: center; border: 1px dashed var(--color-border); border-radius: var(--radius-md); margin-bottom: 1.5rem;">
+          <div style="width: 44px; height: 44px; border-radius: 50%; background: rgba(255,255,255,0.05); display: flex; align-items: center; justify-content: center; margin: 0 auto 0.75rem auto; color: var(--color-ink-secondary);">
+            <Repeat size={20} />
+          </div>
+          <div style="font-weight: 600; font-size: 0.95rem; margin-bottom: 0.25rem;">No redirect or rewrite rules defined</div>
+          <p class="text-xs text-muted" style="max-width: 420px; margin: 0 auto 1.25rem auto;">
+            Configure HTTP 301/302 redirects for domain migration, or rewrite URI paths internally to power single page apps and custom routing.
+          </p>
+          <div style="display: flex; justify-content: center; gap: 0.5rem;">
+            <button type="button" class="btn btn-secondary btn-sm" onclick={() => applyPresetRule('spa')}>
+              + Add SPA Fallback
+            </button>
+            <button type="button" class="btn btn-primary btn-sm" onclick={() => addRouteRule('redirect', '', '', 301)}>
+              + Add First Rule
+            </button>
+          </div>
+        </div>
+      {:else}
+        <div style="display: flex; flex-direction: column; gap: 0.75rem; margin-bottom: 1.5rem;">
+          <!-- Table Header -->
+          <div style="display: grid; grid-template-columns: 160px 1fr 1fr 130px 40px; gap: 0.75rem; padding: 0.5rem 0.75rem; font-size: 0.7rem; font-weight: 700; color: var(--color-ink-secondary); text-transform: uppercase; letter-spacing: 0.05em; background: rgba(255,255,255,0.02); border-radius: var(--radius-sm);">
+            <div>Rule Type</div>
+            <div>Source Path</div>
+            <div>Target Destination</div>
+            <div>Status Code</div>
+            <div></div>
+          </div>
+
+          {#each routeRules as rule, i}
+            <div style="display: grid; grid-template-columns: 160px 1fr 1fr 130px 40px; gap: 0.75rem; align-items: center; padding: 0.65rem 0.75rem; background: rgba(255,255,255,0.02); border: 1px solid var(--color-border); border-radius: var(--radius-md);">
+              <!-- Type -->
+              <select
+                class="form-select font-mono text-xs"
+                bind:value={rule.type}
+                onchange={() => { routesDirty = true; }}
+                style="padding: 0.4rem 0.6rem; font-size: 0.78rem;"
+              >
+                <option value="redirect">Redirect (HTTP)</option>
+                <option value="rewrite">Rewrite (Internal)</option>
+              </select>
+
+              <!-- Source Path -->
+              <div style="position: relative;">
+                <input
+                  type="text"
+                  class="form-input font-mono text-xs"
+                  placeholder="e.g. /docs/* or /old-path"
+                  bind:value={rule.source}
+                  oninput={() => { routesDirty = true; }}
+                  style="width: 100%; padding: 0.4rem 0.6rem; font-size: 0.78rem;"
+                />
+              </div>
+
+              <!-- Target Destination -->
+              <div style="position: relative;">
+                <input
+                  type="text"
+                  class="form-input font-mono text-xs"
+                  placeholder={rule.type === 'redirect' ? 'e.g. https://... or /new-path' : 'e.g. /index.html'}
+                  bind:value={rule.target}
+                  oninput={() => { routesDirty = true; }}
+                  style="width: 100%; padding: 0.4rem 0.6rem; font-size: 0.78rem;"
+                />
+              </div>
+
+              <!-- Status Code (Only active for redirect) -->
+              <div>
+                {#if rule.type === 'redirect'}
+                  <select
+                    class="form-select font-mono text-xs"
+                    bind:value={rule.status}
+                    onchange={() => { routesDirty = true; }}
+                    style="padding: 0.4rem 0.6rem; font-size: 0.78rem; width: 100%;"
+                  >
+                    <option value={301}>301 Permanent</option>
+                    <option value={302}>302 Temporary</option>
+                  </select>
+                {:else}
+                  <span class="badge" style="background: rgba(255,255,255,0.04); color: var(--color-ink-secondary); font-size: 0.7rem; width: 100%; text-align: center; display: block; padding: 5px;">
+                    Internal URI
+                  </span>
+                {/if}
+              </div>
+
+              <!-- Delete Button -->
+              <div style="display: flex; justify-content: center;">
+                <button
+                  type="button"
+                  class="btn btn-secondary btn-sm"
+                  style="color: var(--color-danger); border: none; padding: 6px;"
+                  onclick={() => removeRouteRule(i)}
+                  title="Remove rule"
+                >
+                  <Trash2 size={14} />
+                </button>
+              </div>
+            </div>
+          {/each}
+        </div>
+      {/if}
+
+      <!-- Bottom Action Bar -->
+      <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 0.75rem; padding-top: 1rem; border-top: 1px solid var(--color-border);">
+        <span class="text-xs text-muted">
+          {#if routesDirty}
+            <span style="color: var(--color-warning); font-weight: 600;">You have unsaved route changes</span>
+          {:else}
+            <span style="display: inline-flex; align-items: center; gap: 5px; color: var(--color-success);">
+              <Check size={13} /> Rules synced with edge proxy
+            </span>
+          {/if}
+        </span>
+
+        <div style="display: flex; gap: 0.5rem; align-items: center;">
+          <button
+            type="button"
+            class="btn btn-secondary btn-sm"
+            onclick={() => addRouteRule('redirect', '', '', 301)}
+          >
+            <Plus size={13} />
+            <span>Add Rule</span>
+          </button>
+
+          <button
+            type="button"
+            class="btn btn-primary btn-sm"
+            onclick={saveRouteRules}
+            disabled={routesSaving}
+          >
+            <Save size={13} />
+            <span>{routesSaving ? 'Applying...' : 'Save & Apply Live'}</span>
           </button>
         </div>
       </div>

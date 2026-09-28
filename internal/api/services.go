@@ -10,6 +10,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/rs/zerolog/log"
 	"github.com/vedant/klouds/internal/builder"
+	"github.com/vedant/klouds/internal/caddy"
 	"github.com/vedant/klouds/internal/container"
 	"github.com/vedant/klouds/internal/db"
 	"github.com/vedant/klouds/internal/secrets"
@@ -23,11 +24,12 @@ type ServiceHandler struct {
 	engine     *builder.Engine
 	deployer   *builder.Deployer
 	encryptor  *secrets.Encryptor
+	caddy      *caddy.Manager
 	domain     string // Base domain for subdomain routing
 }
 
 // NewServiceHandler creates a new service handler.
-func NewServiceHandler(pool *pgxpool.Pool, containers *container.Manager, engine *builder.Engine, deployer *builder.Deployer, encryptor *secrets.Encryptor, domain string) *ServiceHandler {
+func NewServiceHandler(pool *pgxpool.Pool, containers *container.Manager, engine *builder.Engine, deployer *builder.Deployer, encryptor *secrets.Encryptor, caddyMgr *caddy.Manager, domain string) *ServiceHandler {
 	return &ServiceHandler{
 		queries:    db.New(pool),
 		pool:       pool,
@@ -35,6 +37,7 @@ func NewServiceHandler(pool *pgxpool.Pool, containers *container.Manager, engine
 		engine:     engine,
 		deployer:   deployer,
 		encryptor:  encryptor,
+		caddy:      caddyMgr,
 		domain:     domain,
 	}
 }
@@ -479,6 +482,156 @@ func (h *ServiceHandler) SetEnv(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writeJSON(w, http.StatusOK, map[string]string{"message": "environment variables updated"})
+}
+
+// RouteRuleItem represents a redirect or rewrite rule for API requests.
+type RouteRuleItem struct {
+	ID     string `json:"id,omitempty"`
+	Type   string `json:"type"` // "redirect" or "rewrite"
+	Source string `json:"source"`
+	Target string `json:"target"`
+	Status int32  `json:"status,omitempty"` // 301, 302
+}
+
+// SetRoutesRequest represents the payload to update service route rules.
+type SetRoutesRequest struct {
+	Routes []RouteRuleItem `json:"routes"`
+}
+
+// GetRoutes handles GET /api/services/{serviceID}/routes
+func (h *ServiceHandler) GetRoutes(w http.ResponseWriter, r *http.Request) {
+	serviceID := chi.URLParam(r, "serviceID")
+	userID := getUserID(r.Context())
+	role := getUserRole(r.Context())
+
+	svc, err := h.queries.GetServiceByID(r.Context(), serviceID)
+	if err != nil {
+		writeError(w, http.StatusNotFound, "service not found")
+		return
+	}
+
+	if role != "admin" && svc.UserID != userID {
+		writeError(w, http.StatusForbidden, "access denied")
+		return
+	}
+
+	rules, err := h.queries.ListRouteRulesByService(r.Context(), serviceID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to list route rules")
+		return
+	}
+
+	writeJSON(w, http.StatusOK, rules)
+}
+
+// SetRoutes handles PUT /api/services/{serviceID}/routes
+func (h *ServiceHandler) SetRoutes(w http.ResponseWriter, r *http.Request) {
+	serviceID := chi.URLParam(r, "serviceID")
+	userID := getUserID(r.Context())
+	role := getUserRole(r.Context())
+
+	svc, err := h.queries.GetServiceByID(r.Context(), serviceID)
+	if err != nil {
+		writeError(w, http.StatusNotFound, "service not found")
+		return
+	}
+
+	if role != "admin" && svc.UserID != userID {
+		writeError(w, http.StatusForbidden, "access denied")
+		return
+	}
+
+	var req SetRoutesRequest
+	if err := decodeJSON(r, &req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+
+	// Validate rules
+	for _, item := range req.Routes {
+		t := strings.ToLower(strings.TrimSpace(item.Type))
+		if t != "redirect" && t != "rewrite" {
+			writeError(w, http.StatusBadRequest, "route rule type must be 'redirect' or 'rewrite'")
+			return
+		}
+		if strings.TrimSpace(item.Source) == "" || strings.TrimSpace(item.Target) == "" {
+			writeError(w, http.StatusBadRequest, "route rule source and target are required")
+			return
+		}
+	}
+
+	// Delete existing rules for this service
+	if err := h.queries.DeleteRouteRulesByService(r.Context(), serviceID); err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to clear existing route rules")
+		return
+	}
+
+	createdRules := make([]db.RouteRule, 0, len(req.Routes))
+	var caddyRedirects []caddy.RedirectRule
+	var caddyRewrites []caddy.RewriteRule
+
+	for _, item := range req.Routes {
+		ruleType := strings.ToLower(strings.TrimSpace(item.Type))
+		src := strings.TrimSpace(item.Source)
+		dst := strings.TrimSpace(item.Target)
+		var statusPtr *int32
+		if ruleType == "redirect" {
+			st := item.Status
+			if st != 301 && st != 302 {
+				st = 301
+			}
+			statusPtr = &st
+			caddyRedirects = append(caddyRedirects, caddy.RedirectRule{
+				Source:     src,
+				Target:     dst,
+				StatusCode: int(st),
+			})
+		} else {
+			caddyRewrites = append(caddyRewrites, caddy.RewriteRule{
+				Source: src,
+				Target: dst,
+			})
+		}
+
+		rr, err := h.queries.CreateRouteRule(r.Context(), db.CreateRouteRuleParams{
+			ServiceID: serviceID,
+			Type:      ruleType,
+			Source:    src,
+			Target:    dst,
+			Status:    statusPtr,
+		})
+		if err != nil {
+			log.Error().Err(err).Msg("failed to insert route rule")
+			continue
+		}
+		createdRules = append(createdRules, rr)
+	}
+
+	// If service has a running container and active subdomain, live-update Caddy
+	if h.caddy != nil && svc.Subdomain != "" && svc.ContainerID != nil && *svc.ContainerID != "" {
+		port := int(svc.Port)
+		if port <= 0 {
+			port = 3000
+		}
+		containerTarget := svc.Slug
+		cRoute := caddy.Route{
+			Subdomain:   svc.Subdomain,
+			BackendHost: containerTarget,
+			BackendPort: port,
+			Redirects:   caddyRedirects,
+			Rewrites:    caddyRewrites,
+		}
+		if err := h.caddy.AddRoute(cRoute); err != nil {
+			log.Error().Err(err).Msg("failed to live update Caddy route rules")
+		} else {
+			log.Info().Str("service", svc.Name).Int("rules", len(createdRules)).Msg("Caddy route rules updated live")
+		}
+	}
+
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"message": "route rules updated successfully",
+		"routes":  createdRules,
+	})
 }
 
 // Stop handles POST /api/services/{serviceID}/stop

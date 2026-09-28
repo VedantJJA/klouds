@@ -90,6 +90,16 @@ export interface Blueprint {
   databases?: BlueprintDatabase[];
 }
 
+export interface RouteRule {
+  id?: string;
+  service_id?: string;
+  type: 'redirect' | 'rewrite';
+  source: string;
+  target: string;
+  status?: number;
+  created_at?: string;
+}
+
 export interface DetectionResult {
   blueprint: Blueprint;
   source: string;
@@ -295,6 +305,17 @@ class ApiClient {
     return this.request(`/api/services/${id}/env`, {
       method: 'PUT',
       body: JSON.stringify({ env_vars: envVars })
+    });
+  }
+
+  async getServiceRoutes(serviceId: string): Promise<RouteRule[]> {
+    return this.request(`/api/services/${serviceId}/routes`);
+  }
+
+  async setServiceRoutes(serviceId: string, routes: RouteRule[]): Promise<{ message: string; routes: RouteRule[] }> {
+    return this.request(`/api/services/${serviceId}/routes`, {
+      method: 'PUT',
+      body: JSON.stringify({ routes })
     });
   }
 

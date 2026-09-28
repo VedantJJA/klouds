@@ -62,36 +62,34 @@ func (h *DatabaseHandler) Create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Normalize engine aliases (e.g. postgres -> postgresql, mongo -> mongodb)
+	// Normalize engine aliases (e.g. postgres -> postgresql, mongo -> mongodb, cache -> redis)
 	engine := strings.ToLower(strings.TrimSpace(req.Engine))
 	switch engine {
 	case "postgres", "postgresql", "pgsql":
 		engine = "postgresql"
+		if req.Version == "" || req.Version == "7" || req.Version == "8.0" {
+			req.Version = "16"
+		}
 	case "mysql":
 		engine = "mysql"
-	case "redis":
+		if req.Version == "" || req.Version == "16" || req.Version == "7" {
+			req.Version = "8.0"
+		}
+	case "redis", "cache", "redis-cache", "valkey":
 		engine = "redis"
+		if req.Version == "" || req.Version == "16" || req.Version == "8.0" || req.Version == "latest" {
+			req.Version = "7-alpine"
+		}
 	case "mongo", "mongodb":
 		engine = "mongodb"
+		if req.Version == "" || req.Version == "16" || req.Version == "8.0" {
+			req.Version = "7"
+		}
 	default:
 		writeError(w, http.StatusBadRequest, "engine must be postgresql, mysql, redis, or mongodb")
 		return
 	}
 	req.Engine = engine
-
-	// Default versions
-	if req.Version == "" {
-		switch req.Engine {
-		case "postgresql":
-			req.Version = "16"
-		case "mysql":
-			req.Version = "8.0"
-		case "redis":
-			req.Version = "7"
-		case "mongodb":
-			req.Version = "7"
-		}
-	}
 
 	// Verify project ownership
 	project, err := h.queries.GetProjectByID(r.Context(), req.ProjectID)
@@ -281,10 +279,17 @@ func (h *DatabaseHandler) ConnectionInfo(w http.ResponseWriter, r *http.Request)
 			dbRecord.Username, password, dbRecord.InternalHost, dbRecord.InternalPort, dbRecord.DatabaseName,
 		)
 	case "redis":
-		info["connection_string"] = fmt.Sprintf(
-			"redis://:%s@%s:%d",
-			password, dbRecord.InternalHost, dbRecord.InternalPort,
-		)
+		if password != "" {
+			info["connection_string"] = fmt.Sprintf(
+				"redis://default:%s@%s:%d",
+				password, dbRecord.InternalHost, dbRecord.InternalPort,
+			)
+		} else {
+			info["connection_string"] = fmt.Sprintf(
+				"redis://%s:%d",
+				dbRecord.InternalHost, dbRecord.InternalPort,
+			)
+		}
 	case "mongodb":
 		info["connection_string"] = fmt.Sprintf(
 			"mongodb://%s:%s@%s:%d/%s",

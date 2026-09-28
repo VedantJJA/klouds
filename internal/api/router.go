@@ -58,7 +58,7 @@ func NewRouter(cfg RouterConfig) *chi.Mux {
 	// Initialize handlers
 	authHandler := NewAuthHandler(cfg.Pool, cfg.TokenSvc)
 	projectHandler := NewProjectHandler(cfg.Pool)
-	serviceHandler := NewServiceHandler(cfg.Pool, cfg.Containers, cfg.Engine, cfg.Deployer, cfg.Encryptor, cfg.Domain)
+	serviceHandler := NewServiceHandler(cfg.Pool, cfg.Containers, cfg.Engine, cfg.Deployer, cfg.Encryptor, cfg.Caddy, cfg.Domain)
 	dbHandler := NewDatabaseHandler(cfg.Pool, cfg.Containers, cfg.Encryptor, cfg.Domain, cfg.DataDir)
 	adminHandler := NewAdminHandler(cfg.Pool, cfg.Containers)
 	metricsHandler := NewMetricsHandler()
@@ -133,6 +133,8 @@ func NewRouter(cfg RouterConfig) *chi.Mux {
 			r.Patch("/services/{serviceID}", serviceHandler.Update)
 			r.Get("/services/{serviceID}/env", serviceHandler.GetEnv)
 			r.Put("/services/{serviceID}/env", serviceHandler.SetEnv)
+			r.Get("/services/{serviceID}/routes", serviceHandler.GetRoutes)
+			r.Put("/services/{serviceID}/routes", serviceHandler.SetRoutes)
 			r.Post("/services/{serviceID}/deploy", serviceHandler.Deploy)
 			r.Post("/services/{serviceID}/stop", serviceHandler.Stop)
 			r.Post("/services/{serviceID}/restart", serviceHandler.Restart)

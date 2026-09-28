@@ -176,7 +176,7 @@ type DatabaseConfig struct {
 
 // CreateDatabaseContainer creates and starts a database container.
 func (m *Manager) CreateDatabaseContainer(ctx context.Context, cfg DatabaseConfig) (string, error) {
-	image, env, dbPort := m.databaseImageConfig(cfg)
+	image, env, cmd, dbPort := m.databaseImageConfig(cfg)
 
 	// Pull image first
 	if err := m.pullImage(ctx, image); err != nil {
@@ -196,6 +196,7 @@ func (m *Manager) CreateDatabaseContainer(ctx context.Context, cfg DatabaseConfi
 	containerConfig := &mobycontainer.Config{
 		Image:        image,
 		Env:          env,
+		Cmd:          cmd,
 		Labels:       labels,
 		ExposedPorts: exposedPorts,
 	}
@@ -344,12 +345,16 @@ func (m *Manager) pullImage(ctx context.Context, image string) error {
 	return nil
 }
 
-// databaseImageConfig returns the Docker image, environment variables, and default port
+// databaseImageConfig returns the Docker image, environment variables, command, and default port
 // for a given database engine.
-func (m *Manager) databaseImageConfig(cfg DatabaseConfig) (image string, env []string, port int) {
+func (m *Manager) databaseImageConfig(cfg DatabaseConfig) (image string, env []string, cmd []string, port int) {
 	switch strings.ToLower(cfg.Engine) {
 	case "postgresql", "postgres", "pgsql":
-		image = fmt.Sprintf("postgres:%s", cfg.Version)
+		v := cfg.Version
+		if v == "" {
+			v = "16"
+		}
+		image = fmt.Sprintf("postgres:%s", v)
 		env = []string{
 			fmt.Sprintf("POSTGRES_DB=%s", cfg.DatabaseName),
 			fmt.Sprintf("POSTGRES_USER=%s", cfg.Username),
@@ -358,7 +363,11 @@ func (m *Manager) databaseImageConfig(cfg DatabaseConfig) (image string, env []s
 		}
 		port = 5432
 	case "mysql":
-		image = fmt.Sprintf("mysql:%s", cfg.Version)
+		v := cfg.Version
+		if v == "" {
+			v = "8.0"
+		}
+		image = fmt.Sprintf("mysql:%s", v)
 		env = []string{
 			fmt.Sprintf("MYSQL_DATABASE=%s", cfg.DatabaseName),
 			fmt.Sprintf("MYSQL_USER=%s", cfg.Username),
@@ -366,14 +375,29 @@ func (m *Manager) databaseImageConfig(cfg DatabaseConfig) (image string, env []s
 			fmt.Sprintf("MYSQL_ROOT_PASSWORD=%s", cfg.Password),
 		}
 		port = 3306
-	case "redis":
-		image = fmt.Sprintf("redis:%s", cfg.Version)
+	case "redis", "cache", "redis-cache", "valkey":
+		v := cfg.Version
+		if v == "" || v == "16" || v == "8.0" || v == "latest" {
+			v = "7-alpine"
+		} else if !strings.Contains(v, "alpine") && !strings.Contains(v, ".") {
+			v = fmt.Sprintf("%s-alpine", v)
+		}
+		image = fmt.Sprintf("redis:%s", v)
 		env = []string{
 			fmt.Sprintf("REDIS_PASSWORD=%s", cfg.Password),
 		}
+		if cfg.Password != "" {
+			cmd = []string{"redis-server", "--requirepass", cfg.Password, "--appendonly", "yes"}
+		} else {
+			cmd = []string{"redis-server", "--appendonly", "yes"}
+		}
 		port = 6379
 	case "mongodb", "mongo":
-		image = fmt.Sprintf("mongo:%s", cfg.Version)
+		v := cfg.Version
+		if v == "" || v == "16" || v == "8.0" {
+			v = "7"
+		}
+		image = fmt.Sprintf("mongo:%s", v)
 		env = []string{
 			fmt.Sprintf("MONGO_INITDB_DATABASE=%s", cfg.DatabaseName),
 			fmt.Sprintf("MONGO_INITDB_ROOT_USERNAME=%s", cfg.Username),

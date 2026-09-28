@@ -118,6 +118,17 @@ func (m *Manager) CaddyJSON(routes []Route) map[string]interface{} {
 			})
 		}
 
+		// Add rewrites
+		for _, rewrite := range route.Rewrites {
+			handlers = append(handlers, map[string]interface{}{
+				"handler": "rewrite",
+				"uri":     rewrite.Target,
+				"match": []map[string]interface{}{
+					{"path": []string{rewrite.Source}},
+				},
+			})
+		}
+
 		// Add reverse proxy
 		handlers = append(handlers, map[string]interface{}{
 			"handler": "reverse_proxy",
@@ -197,15 +208,47 @@ func (m *Manager) AddRoute(route Route) error {
 	upstream := fmt.Sprintf("%s:%d", route.BackendHost, route.BackendPort)
 
 	routeID := fmt.Sprintf("route-%s", route.Subdomain)
-	caddyRoute := map[string]interface{}{
-		"@id":   routeID,
-		"match": []map[string]interface{}{{"host": []string{host}}},
-		"handle": []map[string]interface{}{
-			{
-				"handler":   "reverse_proxy",
-				"upstreams": []map[string]string{{"dial": upstream}},
+	handlers := make([]map[string]interface{}, 0)
+
+	// Add redirects
+	for _, redir := range route.Redirects {
+		status := redir.StatusCode
+		if status == 0 {
+			status = 301
+		}
+		handlers = append(handlers, map[string]interface{}{
+			"handler":     "static_response",
+			"status_code": fmt.Sprintf("%d", status),
+			"headers": map[string][]string{
+				"Location": {redir.Target},
 			},
-		},
+			"match": []map[string]interface{}{
+				{"path": []string{redir.Source}},
+			},
+		})
+	}
+
+	// Add rewrites
+	for _, rewrite := range route.Rewrites {
+		handlers = append(handlers, map[string]interface{}{
+			"handler": "rewrite",
+			"uri":     rewrite.Target,
+			"match": []map[string]interface{}{
+				{"path": []string{rewrite.Source}},
+			},
+		})
+	}
+
+	// Reverse proxy to backend
+	handlers = append(handlers, map[string]interface{}{
+		"handler":   "reverse_proxy",
+		"upstreams": []map[string]string{{"dial": upstream}},
+	})
+
+	caddyRoute := map[string]interface{}{
+		"@id":      routeID,
+		"match":    []map[string]interface{}{{"host": []string{host}}},
+		"handle":   handlers,
 		"terminal": true,
 	}
 

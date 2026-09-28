@@ -90,14 +90,29 @@ func (r *Reconciler) Reconcile(
 		switch eng {
 		case "postgres", "postgresql", "pgsql":
 			eng = "postgresql"
+			if dbDef.Version == "" || dbDef.Version == "7" || dbDef.Version == "8.0" {
+				dbDef.Version = "16"
+			}
 		case "mysql":
 			eng = "mysql"
-		case "redis":
+			if dbDef.Version == "" || dbDef.Version == "16" || dbDef.Version == "7" {
+				dbDef.Version = "8.0"
+			}
+		case "redis", "cache", "redis-cache", "valkey":
 			eng = "redis"
+			if dbDef.Version == "" || dbDef.Version == "16" || dbDef.Version == "8.0" || dbDef.Version == "latest" {
+				dbDef.Version = "7-alpine"
+			}
 		case "mongo", "mongodb":
 			eng = "mongodb"
+			if dbDef.Version == "" || dbDef.Version == "16" || dbDef.Version == "8.0" {
+				dbDef.Version = "7"
+			}
 		default:
 			eng = "postgresql"
+			if dbDef.Version == "" {
+				dbDef.Version = "16"
+			}
 		}
 		dbDef.Engine = eng
 
@@ -134,6 +149,35 @@ func (r *Reconciler) Reconcile(
 		})
 		if err != nil {
 			return nil, fmt.Errorf("create database %s: %w", dbDef.Name, err)
+		}
+
+		// Asynchronously provision the container
+		if r.containers != nil {
+			go func(rec db.Database, pass string) {
+				pCtx := context.Background()
+				cName := fmt.Sprintf("klouds-db-%s", rec.Slug)
+				dVol := fmt.Sprintf("/var/lib/klouds/data/databases/%s", rec.Slug)
+				cID, cErr := r.containers.CreateDatabaseContainer(pCtx, container.DatabaseConfig{
+					Name:         cName,
+					Engine:       rec.Engine,
+					Version:      rec.Version,
+					DatabaseName: rec.DatabaseName,
+					Username:     rec.Username,
+					Password:     pass,
+					Port:         int(rec.InternalPort),
+					CPULimit:     int64(rec.CpuLimit),
+					MemoryLimit:  rec.MemoryLimit,
+					DiskLimit:    rec.DiskLimit,
+					DataVolume:   dVol,
+					NetworkAlias: rec.InternalHost,
+				})
+				if cErr != nil {
+					log.Error().Err(cErr).Str("database", rec.Name).Msg("failed to provision database container in reconciler")
+					_, _ = r.queries.UpdateDatabaseStatus(pCtx, rec.ID, "failed")
+					return
+				}
+				_, _ = r.queries.UpdateDatabaseContainer(pCtx, rec.ID, &cID, "running")
+			}(createdDB, password)
 		}
 
 		dbLookup[dbDef.Name] = createdDB
@@ -277,7 +321,11 @@ func (r *Reconciler) Reconcile(
 						case "mysql":
 							val = fmt.Sprintf("%s:%s@tcp(%s:%d)/%s", d.Username, rawPass, d.InternalHost, d.InternalPort, d.DatabaseName)
 						case "redis":
-							val = fmt.Sprintf("redis://default:%s@%s:%d", rawPass, d.InternalHost, d.InternalPort)
+							if rawPass != "" {
+								val = fmt.Sprintf("redis://default:%s@%s:%d", rawPass, d.InternalHost, d.InternalPort)
+							} else {
+								val = fmt.Sprintf("redis://%s:%d", d.InternalHost, d.InternalPort)
+							}
 						case "mongodb":
 							val = fmt.Sprintf("mongodb://%s:%s@%s:%d/%s", d.Username, rawPass, d.InternalHost, d.InternalPort, d.DatabaseName)
 						}
