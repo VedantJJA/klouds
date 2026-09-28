@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"fmt"
 	"net/http"
+	"strings"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -61,12 +62,22 @@ func (h *DatabaseHandler) Create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Validate engine
-	validEngines := map[string]bool{"postgresql": true, "mysql": true, "redis": true, "mongodb": true}
-	if !validEngines[req.Engine] {
+	// Normalize engine aliases (e.g. postgres -> postgresql, mongo -> mongodb)
+	engine := strings.ToLower(strings.TrimSpace(req.Engine))
+	switch engine {
+	case "postgres", "postgresql", "pgsql":
+		engine = "postgresql"
+	case "mysql":
+		engine = "mysql"
+	case "redis":
+		engine = "redis"
+	case "mongo", "mongodb":
+		engine = "mongodb"
+	default:
 		writeError(w, http.StatusBadRequest, "engine must be postgresql, mysql, redis, or mongodb")
 		return
 	}
+	req.Engine = engine
 
 	// Default versions
 	if req.Version == "" {

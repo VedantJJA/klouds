@@ -348,7 +348,7 @@ func (m *Manager) pullImage(ctx context.Context, image string) error {
 // for a given database engine.
 func (m *Manager) databaseImageConfig(cfg DatabaseConfig) (image string, env []string, port int) {
 	switch strings.ToLower(cfg.Engine) {
-	case "postgresql":
+	case "postgresql", "postgres", "pgsql":
 		image = fmt.Sprintf("postgres:%s", cfg.Version)
 		env = []string{
 			fmt.Sprintf("POSTGRES_DB=%s", cfg.DatabaseName),
@@ -372,7 +372,7 @@ func (m *Manager) databaseImageConfig(cfg DatabaseConfig) (image string, env []s
 			fmt.Sprintf("REDIS_PASSWORD=%s", cfg.Password),
 		}
 		port = 6379
-	case "mongodb":
+	case "mongodb", "mongo":
 		image = fmt.Sprintf("mongo:%s", cfg.Version)
 		env = []string{
 			fmt.Sprintf("MONGO_INITDB_DATABASE=%s", cfg.DatabaseName),

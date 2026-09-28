@@ -86,6 +86,21 @@ func (r *Reconciler) Reconcile(
 		}
 
 		slug := slugify(dbDef.Name)
+		eng := strings.ToLower(strings.TrimSpace(dbDef.Engine))
+		switch eng {
+		case "postgres", "postgresql", "pgsql":
+			eng = "postgresql"
+		case "mysql":
+			eng = "mysql"
+		case "redis":
+			eng = "redis"
+		case "mongo", "mongodb":
+			eng = "mongodb"
+		default:
+			eng = "postgresql"
+		}
+		dbDef.Engine = eng
+
 		portMap := map[string]int32{"postgresql": 5432, "mysql": 3306, "redis": 6379, "mongodb": 27017}
 		internalPort := portMap[dbDef.Engine]
 		if internalPort == 0 {

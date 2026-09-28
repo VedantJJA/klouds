@@ -353,7 +353,19 @@ func ParseBlueprint(data []byte) (*Blueprint, error) {
 			db.Name = name
 		}
 		if eng, ok := rawDb["engine"].(string); ok {
-			db.Engine = strings.ToLower(eng)
+			e := strings.ToLower(strings.TrimSpace(eng))
+			switch e {
+			case "postgres", "postgresql", "pgsql":
+				db.Engine = "postgresql"
+			case "mysql":
+				db.Engine = "mysql"
+			case "redis":
+				db.Engine = "redis"
+			case "mongo", "mongodb":
+				db.Engine = "mongodb"
+			default:
+				db.Engine = e
+			}
 		} else {
 			db.Engine = "postgresql"
 		}

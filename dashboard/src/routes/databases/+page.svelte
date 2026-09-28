@@ -13,7 +13,7 @@
   let showModal = $state(false);
   let selectedProjectId = $state('');
   let name = $state('');
-  let engine = $state<'postgres' | 'redis' | 'mongodb' | 'mysql'>('postgres');
+  let engine = $state<'postgresql' | 'postgres' | 'redis' | 'mongodb' | 'mysql'>('postgresql');
   let version = $state('16');
   let provisioning = $state(false);
   let provisionError = $state('');
@@ -216,7 +216,7 @@
           <div class="form-group">
             <label class="form-label" for="db-engine-select">Database Engine</label>
             <select id="db-engine-select" class="form-select" bind:value={engine}>
-              <option value="postgres">PostgreSQL</option>
+              <option value="postgresql">PostgreSQL</option>
               <option value="redis">Redis</option>
               <option value="mongodb">MongoDB</option>
               <option value="mysql">MySQL</option>

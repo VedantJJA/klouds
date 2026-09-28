@@ -58,7 +58,7 @@
   // Provision Database Modal State
   let showDbModal = $state(false);
   let dbName = $state('');
-  let dbEngine = $state<'postgres' | 'redis' | 'mongodb' | 'mysql'>('postgres');
+  let dbEngine = $state<'postgresql' | 'postgres' | 'redis' | 'mongodb' | 'mysql'>('postgresql');
   let dbVersion = $state('16');
   let provisioning = $state(false);
   let provisionError = $state('');
@@ -718,7 +718,7 @@
           <div class="form-group">
             <label class="form-label" for="db-engine">Database Engine</label>
             <select id="db-engine" class="form-select" bind:value={dbEngine}>
-              <option value="postgres">PostgreSQL</option>
+              <option value="postgresql">PostgreSQL</option>
               <option value="redis">Redis</option>
               <option value="mongodb">MongoDB</option>
               <option value="mysql">MySQL</option>

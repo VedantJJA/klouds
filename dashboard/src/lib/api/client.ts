@@ -100,7 +100,7 @@ export interface Database {
   id: string;
   project_id: string;
   name: string;
-  engine: 'postgres' | 'redis' | 'mongodb' | 'mysql';
+  engine: 'postgresql' | 'postgres' | 'redis' | 'mongodb' | 'mysql';
   version: string;
   port: number;
   status: 'creating' | 'running' | 'stopped' | 'failed';
@@ -362,7 +362,7 @@ class ApiClient {
   async createDatabase(data: {
     project_id: string;
     name: string;
-    engine: 'postgres' | 'redis' | 'mongodb' | 'mysql';
+    engine: 'postgresql' | 'postgres' | 'redis' | 'mongodb' | 'mysql';
     version: string;
   }): Promise<Database> {
     return this.request('/api/databases', {
