@@ -101,41 +101,7 @@ func (m *Manager) CaddyJSON(routes []Route) map[string]interface{} {
 	for _, route := range routes {
 		host := fmt.Sprintf("%s.%s", route.Subdomain, m.domain)
 		upstream := fmt.Sprintf("%s:%d", route.BackendHost, route.BackendPort)
-
-		handlers := make([]map[string]interface{}, 0)
-
-		// Add redirects
-		for _, redir := range route.Redirects {
-			handlers = append(handlers, map[string]interface{}{
-				"handler":     "static_response",
-				"status_code": fmt.Sprintf("%d", redir.StatusCode),
-				"headers": map[string][]string{
-					"Location": {redir.Target},
-				},
-				"match": []map[string]interface{}{
-					{"path": []string{redir.Source}},
-				},
-			})
-		}
-
-		// Add rewrites
-		for _, rewrite := range route.Rewrites {
-			handlers = append(handlers, map[string]interface{}{
-				"handler": "rewrite",
-				"uri":     rewrite.Target,
-				"match": []map[string]interface{}{
-					{"path": []string{rewrite.Source}},
-				},
-			})
-		}
-
-		// Add reverse proxy
-		handlers = append(handlers, map[string]interface{}{
-			"handler": "reverse_proxy",
-			"upstreams": []map[string]string{
-				{"dial": upstream},
-			},
-		})
+		handlers := buildRouteHandlers(upstream, route.Redirects, route.Rewrites)
 
 		caddyRoute := map[string]interface{}{
 			"match": []map[string]interface{}{
@@ -208,42 +174,7 @@ func (m *Manager) AddRoute(route Route) error {
 	upstream := fmt.Sprintf("%s:%d", route.BackendHost, route.BackendPort)
 
 	routeID := fmt.Sprintf("route-%s", route.Subdomain)
-	handlers := make([]map[string]interface{}, 0)
-
-	// Add redirects
-	for _, redir := range route.Redirects {
-		status := redir.StatusCode
-		if status == 0 {
-			status = 301
-		}
-		handlers = append(handlers, map[string]interface{}{
-			"handler":     "static_response",
-			"status_code": fmt.Sprintf("%d", status),
-			"headers": map[string][]string{
-				"Location": {redir.Target},
-			},
-			"match": []map[string]interface{}{
-				{"path": []string{redir.Source}},
-			},
-		})
-	}
-
-	// Add rewrites
-	for _, rewrite := range route.Rewrites {
-		handlers = append(handlers, map[string]interface{}{
-			"handler": "rewrite",
-			"uri":     rewrite.Target,
-			"match": []map[string]interface{}{
-				{"path": []string{rewrite.Source}},
-			},
-		})
-	}
-
-	// Reverse proxy to backend
-	handlers = append(handlers, map[string]interface{}{
-		"handler":   "reverse_proxy",
-		"upstreams": []map[string]string{{"dial": upstream}},
-	})
+	handlers := buildRouteHandlers(upstream, route.Redirects, route.Rewrites)
 
 	caddyRoute := map[string]interface{}{
 		"@id":      routeID,
@@ -294,4 +225,72 @@ func (m *Manager) RemoveRoute(subdomain string) error {
 	defer resp.Body.Close()
 	log.Info().Str("subdomain", subdomain).Msg("Caddy dynamic route removed")
 	return nil
+}
+
+// buildRouteHandlers creates the Caddy handler chain for a route, using subroute when redirects or rewrites exist.
+func buildRouteHandlers(upstream string, redirects []RedirectRule, rewrites []RewriteRule) []map[string]interface{} {
+	if len(redirects) == 0 && len(rewrites) == 0 {
+		return []map[string]interface{}{
+			{
+				"handler":   "reverse_proxy",
+				"upstreams": []map[string]string{{"dial": upstream}},
+			},
+		}
+	}
+
+	subroutes := make([]map[string]interface{}, 0, len(redirects)+len(rewrites)+1)
+
+	// Add redirects
+	for _, redir := range redirects {
+		status := redir.StatusCode
+		if status == 0 {
+			status = 301
+		}
+		subroutes = append(subroutes, map[string]interface{}{
+			"match": []map[string]interface{}{
+				{"path": []string{redir.Source}},
+			},
+			"handle": []map[string]interface{}{
+				{
+					"handler":     "static_response",
+					"status_code": fmt.Sprintf("%d", status),
+					"headers": map[string][]string{
+						"Location": {redir.Target},
+					},
+				},
+			},
+		})
+	}
+
+	// Add rewrites
+	for _, rewrite := range rewrites {
+		subroutes = append(subroutes, map[string]interface{}{
+			"match": []map[string]interface{}{
+				{"path": []string{rewrite.Source}},
+			},
+			"handle": []map[string]interface{}{
+				{
+					"handler": "rewrite",
+					"uri":     rewrite.Target,
+				},
+			},
+		})
+	}
+
+	// Fallback reverse proxy
+	subroutes = append(subroutes, map[string]interface{}{
+		"handle": []map[string]interface{}{
+			{
+				"handler":   "reverse_proxy",
+				"upstreams": []map[string]string{{"dial": upstream}},
+			},
+		},
+	})
+
+	return []map[string]interface{}{
+		{
+			"handler": "subroute",
+			"routes":  subroutes,
+		},
+	}
 }
