@@ -13,6 +13,7 @@ import (
 
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/rs/zerolog/log"
+	"github.com/vedant/klouds/internal/container"
 )
 
 // DatabaseProxy provides a single-port external TCP routing gateway for PostgreSQL and Redis databases.
@@ -20,22 +21,24 @@ import (
 // and the router inspects the connection protocol (StartupMessage / SNI / Auth) to dynamically
 // splice traffic to the isolated target container on the internal Docker network.
 type DatabaseProxy struct {
-	pool      *pgxpool.Pool
-	domain    string
-	pgPort    int
-	redisPort int
-	stopCh    chan struct{}
-	wg        sync.WaitGroup
+	pool       *pgxpool.Pool
+	domain     string
+	pgPort     int
+	redisPort  int
+	containers *container.Manager
+	stopCh     chan struct{}
+	wg         sync.WaitGroup
 }
 
 // NewDatabaseProxy creates a new single-port database proxy gateway.
-func NewDatabaseProxy(pool *pgxpool.Pool, domain string, pgPort, redisPort int) *DatabaseProxy {
+func NewDatabaseProxy(pool *pgxpool.Pool, domain string, pgPort, redisPort int, containers *container.Manager) *DatabaseProxy {
 	return &DatabaseProxy{
-		pool:      pool,
-		domain:    domain,
-		pgPort:    pgPort,
-		redisPort: redisPort,
-		stopCh:    make(chan struct{}),
+		pool:       pool,
+		domain:     domain,
+		pgPort:     pgPort,
+		redisPort:  redisPort,
+		containers: containers,
+		stopCh:     make(chan struct{}),
 	}
 }
 
@@ -166,7 +169,7 @@ func (p *DatabaseProxy) handlePostgresClient(client net.Conn) {
 	}
 
 	// Connect to internal database container
-	backend, err := net.DialTimeout("tcp", fmt.Sprintf("%s:%d", targetHost, targetPort), 5*time.Second)
+	backend, err := p.dialTarget(targetHost, targetPort)
 	if err != nil {
 		log.Error().Err(err).Str("host", targetHost).Int("port", targetPort).Msg("Database proxy: failed to dial backend container")
 		sendPGError(client, "FATAL: database container is temporarily unreachable\n")
@@ -257,7 +260,7 @@ func (p *DatabaseProxy) handleRedisClient(client net.Conn) {
 		return
 	}
 
-	backend, err := net.DialTimeout("tcp", fmt.Sprintf("%s:%d", targetHost, targetPort), 5*time.Second)
+	backend, err := p.dialTarget(targetHost, targetPort)
 	if err != nil {
 		_, _ = client.Write([]byte("-ERR backend unavailable\r\n"))
 		return
@@ -309,6 +312,25 @@ func (p *DatabaseProxy) resolveRedisTarget(password string) (string, int, error)
 	}
 
 	return "", 0, fmt.Errorf("no redis target found")
+}
+
+// dialTarget resolves the target container IP and establishes a TCP connection.
+func (p *DatabaseProxy) dialTarget(targetHost string, targetPort int) (net.Conn, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	// 1. If container manager is available, resolve container IP on internal bridge network
+	if p.containers != nil {
+		if ip, err := p.containers.GetContainerIP(ctx, "klouds-db-"+targetHost); err == nil && ip != "" {
+			return net.DialTimeout("tcp", fmt.Sprintf("%s:%d", ip, targetPort), 5*time.Second)
+		}
+		if ip, err := p.containers.GetContainerIP(ctx, targetHost); err == nil && ip != "" {
+			return net.DialTimeout("tcp", fmt.Sprintf("%s:%d", ip, targetPort), 5*time.Second)
+		}
+	}
+
+	// 2. Direct DNS / host resolution fallback
+	return net.DialTimeout("tcp", fmt.Sprintf("%s:%d", targetHost, targetPort), 5*time.Second)
 }
 
 func parsePGStartupParams(pkt []byte) map[string]string {

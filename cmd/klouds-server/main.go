@@ -87,7 +87,7 @@ func main() {
 	deployer := builder.NewDeployer(pool, containerMgr, caddyMgr, cfg.Domain)
 
 	// Initialize single-port external database TCP router (PostgreSQL 5432, Redis 6379)
-	databaseProxy := dbproxy.NewDatabaseProxy(pool, cfg.Domain, 5432, 6379)
+	databaseProxy := dbproxy.NewDatabaseProxy(pool, cfg.Domain, 5432, 6379, containerMgr)
 	if err := databaseProxy.Start(); err != nil {
 		log.Warn().Err(err).Msg("Database proxy initialization warning")
 	}
