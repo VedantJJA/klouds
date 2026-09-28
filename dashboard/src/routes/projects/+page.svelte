@@ -2,18 +2,11 @@
   import { onMount } from 'svelte';
   import { api, type Project } from '$lib/api/client';
   import Breadcrumbs from '$lib/components/common/Breadcrumbs.svelte';
-  import { FolderKanban, Plus, X, ArrowRight, Trash2, Calendar } from '@lucide/svelte';
+  import { FolderKanban, Plus, ArrowRight, Trash2, Calendar } from '@lucide/svelte';
 
   let projects = $state<Project[]>([]);
   let loading = $state(true);
   let error = $state('');
-
-  // New Project Modal State
-  let showCreateModal = $state(false);
-  let newName = $state('');
-  let newDescription = $state('');
-  let creating = $state(false);
-  let createError = $state('');
 
   async function loadProjects() {
     loading = true;
@@ -24,28 +17,6 @@
       error = err.message || 'Failed to load projects';
     } finally {
       loading = false;
-    }
-  }
-
-  async function handleCreateProject(e: SubmitEvent) {
-    e.preventDefault();
-    if (!newName.trim()) return;
-
-    creating = true;
-    createError = '';
-    try {
-      const created = await api.createProject({
-        name: newName.trim(),
-        description: newDescription.trim()
-      });
-      projects = [created, ...projects];
-      newName = '';
-      newDescription = '';
-      showCreateModal = false;
-    } catch (err: any) {
-      createError = err.message || 'Failed to create project';
-    } finally {
-      creating = false;
     }
   }
 
@@ -81,10 +52,10 @@
     <p class="page-subtitle">Organize and isolate your microservices, APIs, and managed databases</p>
   </div>
 
-  <button class="btn btn-primary" onclick={() => showCreateModal = true}>
+  <a href="/projects/new" class="btn btn-primary">
     <Plus size={15} />
-    <span>Create Project</span>
-  </button>
+    <span>New Project</span>
+  </a>
 </div>
 
 {#if error}
@@ -102,10 +73,10 @@
     </div>
     <h3>No Projects Found</h3>
     <p class="text-sm text-muted mb-4">You have not created any projects yet. Projects group your services and databases together.</p>
-    <button class="btn btn-primary" onclick={() => showCreateModal = true}>
+    <a href="/projects/new" class="btn btn-primary">
       <Plus size={15} />
-      <span>Create Your First Project</span>
-    </button>
+      <span>Setup Your First Project</span>
+    </a>
   </div>
 {:else}
   <div class="projects-grid">
@@ -145,67 +116,6 @@
         </div>
       </div>
     {/each}
-  </div>
-{/if}
-
-<!-- Create Project Modal -->
-{#if showCreateModal}
-  <div class="modal-overlay" role="dialog" aria-modal="true">
-    <button type="button" class="modal-backdrop" onclick={() => showCreateModal = false} aria-label="Close modal"></button>
-    <div class="modal-content">
-      <div class="modal-header">
-        <h3>Create New Project</h3>
-        <button class="btn-icon" onclick={() => showCreateModal = false}>
-          <X size={16} />
-        </button>
-      </div>
-
-      <form onsubmit={handleCreateProject}>
-        <div class="modal-body">
-          {#if createError}
-            <div class="error-banner mb-3">
-              <span>{createError}</span>
-            </div>
-          {/if}
-
-          <div class="form-group">
-            <label class="form-label" for="proj-name">Project Name</label>
-            <input
-              id="proj-name"
-              type="text"
-              class="form-input"
-              placeholder="e.g. backend-api"
-              bind:value={newName}
-              required
-            />
-          </div>
-
-          <div class="form-group">
-            <label class="form-label" for="proj-desc">Description (Optional)</label>
-            <textarea
-              id="proj-desc"
-              class="form-textarea"
-              rows={3}
-              placeholder="Brief description of workloads and services..."
-              bind:value={newDescription}
-            ></textarea>
-          </div>
-        </div>
-
-        <div class="modal-footer">
-          <button
-            type="button"
-            class="btn btn-secondary"
-            onclick={() => showCreateModal = false}
-          >
-            Cancel
-          </button>
-          <button type="submit" class="btn btn-primary" disabled={creating}>
-            {creating ? 'Creating...' : 'Create Project'}
-          </button>
-        </div>
-      </form>
-    </div>
   </div>
 {/if}
 
@@ -285,14 +195,5 @@
     justify-content: space-between;
     border-top: 1px solid var(--color-border-subtle);
     padding-top: var(--sp-3);
-  }
-
-  .error-banner {
-    padding: 8px 12px;
-    background: var(--color-danger-subtle);
-    border: 1px solid rgba(248, 113, 113, 0.3);
-    border-radius: var(--radius-md);
-    color: var(--color-danger);
-    font-size: 0.8125rem;
   }
 </style>

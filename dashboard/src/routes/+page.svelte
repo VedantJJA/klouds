@@ -61,7 +61,7 @@
       <RefreshCw size={14} class={loading ? 'spin' : ''} />
       <span>Refresh</span>
     </button>
-    <a href="/projects" class="btn btn-primary btn-sm">
+    <a href="/projects/new" class="btn btn-primary btn-sm">
       <Plus size={14} />
       <span>New Project</span>
     </a>
