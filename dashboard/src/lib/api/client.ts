@@ -33,15 +33,27 @@ export interface Service {
   id: string;
   project_id: string;
   name: string;
+  slug?: string;
+  type?: string;
   root_dir?: string;
-  source_type: 'git' | 'dockerfile' | 'image';
+  root_directory?: string;
+  build_method?: string;
+  source_type?: 'git' | 'dockerfile' | 'image';
   git_repo?: string;
+  repo_url?: string;
   git_branch?: string;
+  branch?: string;
   docker_image?: string;
+  dockerfile_path?: string;
+  build_command?: string;
+  start_command?: string;
+  health_check_path?: string;
+  auto_deploy?: boolean;
   env_vars?: Record<string, string>;
   port: number;
-  status: 'pending' | 'building' | 'deploying' | 'running' | 'stopped' | 'failed';
+  status: 'created' | 'pending' | 'building' | 'deploying' | 'running' | 'stopped' | 'failed';
   container_id?: string;
+  image_tag?: string;
   subdomain: string;
   custom_domain?: string;
   cpu_limit: number;
@@ -251,6 +263,38 @@ class ApiClient {
     return this.request('/api/services', {
       method: 'POST',
       body: JSON.stringify(data)
+    });
+  }
+
+  async updateService(id: string, data: {
+    name?: string;
+    type?: string;
+    build_method?: string;
+    repo_url?: string;
+    branch?: string;
+    root_directory?: string;
+    dockerfile_path?: string;
+    build_command?: string;
+    start_command?: string;
+    port?: number;
+    health_check_path?: string;
+    auto_deploy?: boolean;
+    env_vars?: Record<string, string>;
+  }): Promise<Service> {
+    return this.request(`/api/services/${id}`, {
+      method: 'PUT',
+      body: JSON.stringify(data)
+    });
+  }
+
+  async getServiceEnv(id: string): Promise<Array<{ id?: string; key: string; value: string; is_build_time?: boolean }>> {
+    return this.request(`/api/services/${id}/env`);
+  }
+
+  async setServiceEnv(id: string, envVars: Record<string, string>): Promise<{ message: string }> {
+    return this.request(`/api/services/${id}/env`, {
+      method: 'PUT',
+      body: JSON.stringify({ env_vars: envVars })
     });
   }
 

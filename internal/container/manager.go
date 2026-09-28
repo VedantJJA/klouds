@@ -76,6 +76,18 @@ type ServiceConfig struct {
 
 // CreateServiceContainer creates and starts a container for a user service.
 func (m *Manager) CreateServiceContainer(ctx context.Context, cfg ServiceConfig) (string, error) {
+	portNum := cfg.Port
+	if portNum <= 0 {
+		portNum = 3000
+	}
+
+	if cfg.EnvVars == nil {
+		cfg.EnvVars = make(map[string]string)
+	}
+	if _, ok := cfg.EnvVars["PORT"]; !ok {
+		cfg.EnvVars["PORT"] = fmt.Sprintf("%d", portNum)
+	}
+
 	// Build env vars list
 	env := make([]string, 0, len(cfg.EnvVars))
 	for k, v := range cfg.EnvVars {
@@ -89,7 +101,7 @@ func (m *Manager) CreateServiceContainer(ctx context.Context, cfg ServiceConfig)
 	cfg.Labels["managed-by"] = "klouds"
 
 	exposedPorts := make(mobynetwork.PortSet)
-	port := mobynetwork.MustParsePort(fmt.Sprintf("%d/tcp", cfg.Port))
+	port := mobynetwork.MustParsePort(fmt.Sprintf("%d/tcp", portNum))
 	exposedPorts[port] = struct{}{}
 
 	containerConfig := &mobycontainer.Config{

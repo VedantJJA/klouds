@@ -178,6 +178,11 @@ func (r *Reconciler) Reconcile(
 			healthCheckPath = "/"
 		}
 
+		port := svcDef.Port
+		if port <= 0 {
+			port = 3000
+		}
+
 		var targetSvc db.Service
 		var isNew bool
 
@@ -193,7 +198,7 @@ func (r *Reconciler) Reconcile(
 				DockerfilePath:  &dockerfilePath,
 				BuildCommand:    &svcDef.BuildCommand,
 				StartCommand:    &svcDef.StartCommand,
-				Port:            svcDef.Port,
+				Port:            port,
 				HealthCheckPath: &healthCheckPath,
 				AutoDeploy:      autoDeploy,
 			})
@@ -219,7 +224,7 @@ func (r *Reconciler) Reconcile(
 				DockerfilePath:  &dockerfilePath,
 				BuildCommand:    &svcDef.BuildCommand,
 				StartCommand:    &svcDef.StartCommand,
-				Port:            svcDef.Port,
+				Port:            port,
 				HealthCheckPath: &healthCheckPath,
 				AutoDeploy:      autoDeploy,
 				Subdomain:       subdomain,

@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"net/http"
+	"strings"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -127,6 +128,11 @@ func (h *ServiceHandler) Create(w http.ResponseWriter, r *http.Request) {
 		rootDir = "."
 	}
 
+	port := req.Port
+	if port <= 0 {
+		port = 3000
+	}
+
 	svc, err := h.queries.CreateService(r.Context(), db.CreateServiceParams{
 		ProjectID:       req.ProjectID,
 		UserID:          userID,
@@ -140,7 +146,7 @@ func (h *ServiceHandler) Create(w http.ResponseWriter, r *http.Request) {
 		DockerfilePath:  req.DockerfilePath,
 		BuildCommand:    req.BuildCommand,
 		StartCommand:    req.StartCommand,
-		Port:            req.Port,
+		Port:            port,
 		HealthCheckPath: req.HealthCheckPath,
 		AutoDeploy:      req.AutoDeploy,
 		Subdomain:       subdomain,
@@ -188,6 +194,12 @@ func (h *ServiceHandler) List(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	for i := range services {
+		if services[i].Port <= 0 {
+			services[i].Port = 3000
+		}
+	}
+
 	writeJSON(w, http.StatusOK, services)
 }
 
@@ -208,7 +220,265 @@ func (h *ServiceHandler) Get(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if svc.Port <= 0 {
+		svc.Port = 3000
+	}
+
 	writeJSON(w, http.StatusOK, svc)
+}
+
+// UpdateServiceRequest is the JSON payload for updating service settings.
+type UpdateServiceRequest struct {
+	Name            *string           `json:"name"`
+	Type            *string           `json:"type"`
+	BuildMethod     *string           `json:"build_method"`
+	RepoURL         *string           `json:"repo_url"`
+	Branch          *string           `json:"branch"`
+	RootDirectory   *string           `json:"root_directory"`
+	DockerfilePath  *string           `json:"dockerfile_path"`
+	BuildCommand    *string           `json:"build_command"`
+	StartCommand    *string           `json:"start_command"`
+	Port            *int32            `json:"port"`
+	HealthCheckPath *string           `json:"health_check_path"`
+	AutoDeploy      *bool             `json:"auto_deploy"`
+	EnvVars         map[string]string `json:"env_vars"`
+}
+
+// Update handles PUT /api/services/{serviceID} and PATCH /api/services/{serviceID}
+func (h *ServiceHandler) Update(w http.ResponseWriter, r *http.Request) {
+	serviceID := chi.URLParam(r, "serviceID")
+	userID := getUserID(r.Context())
+	role := getUserRole(r.Context())
+
+	svc, err := h.queries.GetServiceByID(r.Context(), serviceID)
+	if err != nil {
+		writeError(w, http.StatusNotFound, "service not found")
+		return
+	}
+
+	if role != "admin" && svc.UserID != userID {
+		writeError(w, http.StatusForbidden, "access denied")
+		return
+	}
+
+	var req UpdateServiceRequest
+	if err := decodeJSON(r, &req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+
+	name := svc.Name
+	if req.Name != nil && strings.TrimSpace(*req.Name) != "" {
+		name = strings.TrimSpace(*req.Name)
+	}
+
+	svcType := svc.Type
+	if req.Type != nil && strings.TrimSpace(*req.Type) != "" {
+		svcType = strings.TrimSpace(*req.Type)
+	}
+
+	buildMethod := svc.BuildMethod
+	if req.BuildMethod != nil && strings.TrimSpace(*req.BuildMethod) != "" {
+		buildMethod = strings.TrimSpace(*req.BuildMethod)
+	}
+
+	repoURL := svc.RepoURL
+	if req.RepoURL != nil {
+		trimmed := strings.TrimSpace(*req.RepoURL)
+		repoURL = &trimmed
+	}
+
+	branch := svc.Branch
+	if req.Branch != nil {
+		trimmed := strings.TrimSpace(*req.Branch)
+		branch = &trimmed
+	}
+
+	rootDir := svc.RootDirectory
+	if req.RootDirectory != nil && strings.TrimSpace(*req.RootDirectory) != "" {
+		rootDir = strings.TrimSpace(*req.RootDirectory)
+	}
+
+	dockerfilePath := svc.DockerfilePath
+	if req.DockerfilePath != nil {
+		trimmed := strings.TrimSpace(*req.DockerfilePath)
+		dockerfilePath = &trimmed
+	}
+
+	buildCmd := svc.BuildCommand
+	if req.BuildCommand != nil {
+		trimmed := strings.TrimSpace(*req.BuildCommand)
+		buildCmd = &trimmed
+	}
+
+	startCmd := svc.StartCommand
+	if req.StartCommand != nil {
+		trimmed := strings.TrimSpace(*req.StartCommand)
+		startCmd = &trimmed
+	}
+
+	port := svc.Port
+	if req.Port != nil {
+		port = *req.Port
+	}
+	if port <= 0 {
+		port = 3000
+	}
+
+	healthCheckPath := svc.HealthCheckPath
+	if req.HealthCheckPath != nil {
+		trimmed := strings.TrimSpace(*req.HealthCheckPath)
+		healthCheckPath = &trimmed
+	}
+
+	autoDeploy := svc.AutoDeploy
+	if req.AutoDeploy != nil {
+		autoDeploy = *req.AutoDeploy
+	}
+
+	updatedSvc, err := h.queries.UpdateServiceSpec(r.Context(), db.UpdateServiceSpecParams{
+		ID:              svc.ID,
+		Name:            name,
+		Type:            svcType,
+		BuildMethod:     buildMethod,
+		RepoURL:         repoURL,
+		Branch:          branch,
+		RootDirectory:   rootDir,
+		DockerfilePath:  dockerfilePath,
+		BuildCommand:    buildCmd,
+		StartCommand:    startCmd,
+		Port:            port,
+		HealthCheckPath: healthCheckPath,
+		AutoDeploy:      autoDeploy,
+	})
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, fmt.Sprintf("failed to update service spec: %v", err))
+		return
+	}
+
+	// Update env vars if provided
+	if req.EnvVars != nil {
+		for k, v := range req.EnvVars {
+			trimmedKey := strings.TrimSpace(k)
+			if trimmedKey == "" {
+				continue
+			}
+			valEnc := v
+			if h.encryptor != nil {
+				if encrypted, encErr := h.encryptor.Encrypt(v); encErr == nil {
+					valEnc = encrypted
+				}
+			}
+			_, _ = h.queries.CreateEnvVar(r.Context(), db.CreateEnvVarParams{
+				ServiceID:      svc.ID,
+				Key:            trimmedKey,
+				ValueEncrypted: valEnc,
+				IsBuildTime:    true,
+				IsLinked:       false,
+			})
+		}
+	}
+
+	writeJSON(w, http.StatusOK, updatedSvc)
+}
+
+// GetEnv handles GET /api/services/{serviceID}/env
+func (h *ServiceHandler) GetEnv(w http.ResponseWriter, r *http.Request) {
+	serviceID := chi.URLParam(r, "serviceID")
+	userID := getUserID(r.Context())
+	role := getUserRole(r.Context())
+
+	svc, err := h.queries.GetServiceByID(r.Context(), serviceID)
+	if err != nil {
+		writeError(w, http.StatusNotFound, "service not found")
+		return
+	}
+
+	if role != "admin" && svc.UserID != userID {
+		writeError(w, http.StatusForbidden, "access denied")
+		return
+	}
+
+	vars, err := h.queries.ListEnvVarsByService(r.Context(), serviceID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to list env vars")
+		return
+	}
+
+	result := make([]map[string]interface{}, 0, len(vars))
+	for _, v := range vars {
+		val := v.ValueEncrypted
+		if h.encryptor != nil {
+			if dec, err := h.encryptor.Decrypt(v.ValueEncrypted); err == nil {
+				val = dec
+			}
+		}
+		result = append(result, map[string]interface{}{
+			"id":            v.ID,
+			"key":           v.Key,
+			"value":         val,
+			"is_build_time": v.IsBuildTime,
+			"is_linked":     v.IsLinked,
+		})
+	}
+
+	writeJSON(w, http.StatusOK, result)
+}
+
+// SetEnv handles PUT /api/services/{serviceID}/env
+func (h *ServiceHandler) SetEnv(w http.ResponseWriter, r *http.Request) {
+	serviceID := chi.URLParam(r, "serviceID")
+	userID := getUserID(r.Context())
+	role := getUserRole(r.Context())
+
+	svc, err := h.queries.GetServiceByID(r.Context(), serviceID)
+	if err != nil {
+		writeError(w, http.StatusNotFound, "service not found")
+		return
+	}
+
+	if role != "admin" && svc.UserID != userID {
+		writeError(w, http.StatusForbidden, "access denied")
+		return
+	}
+
+	var req struct {
+		EnvVars map[string]string `json:"env_vars"`
+	}
+	if err := decodeJSON(r, &req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+
+	// Delete all existing and replace
+	existing, _ := h.queries.ListEnvVarsByService(r.Context(), serviceID)
+	for _, ev := range existing {
+		if _, keep := req.EnvVars[ev.Key]; !keep {
+			_ = h.queries.DeleteEnvVar(r.Context(), ev.ID)
+		}
+	}
+
+	for k, v := range req.EnvVars {
+		trimmedKey := strings.TrimSpace(k)
+		if trimmedKey == "" {
+			continue
+		}
+		valEnc := v
+		if h.encryptor != nil {
+			if encrypted, encErr := h.encryptor.Encrypt(v); encErr == nil {
+				valEnc = encrypted
+			}
+		}
+		_, _ = h.queries.CreateEnvVar(r.Context(), db.CreateEnvVarParams{
+			ServiceID:      serviceID,
+			Key:            trimmedKey,
+			ValueEncrypted: valEnc,
+			IsBuildTime:    true,
+			IsLinked:       false,
+		})
+	}
+
+	writeJSON(w, http.StatusOK, map[string]string{"message": "environment variables updated"})
 }
 
 // Stop handles POST /api/services/{serviceID}/stop
@@ -272,15 +542,31 @@ func (h *ServiceHandler) Restart(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	port := int(svc.Port)
+	if port <= 0 {
+		port = 3000
+	}
+
 	envVars := map[string]string{
-		"PORT": fmt.Sprintf("%d", svc.Port),
+		"PORT": fmt.Sprintf("%d", port),
+	}
+	if envs, err := h.queries.ListEnvVarsByService(r.Context(), svc.ID); err == nil {
+		for _, ev := range envs {
+			val := ev.ValueEncrypted
+			if h.encryptor != nil {
+				if decrypted, decErr := h.encryptor.Decrypt(ev.ValueEncrypted); decErr == nil {
+					val = decrypted
+				}
+			}
+			envVars[ev.Key] = val
+		}
 	}
 
 	containerName := fmt.Sprintf("klouds-svc-%s", svc.Slug)
 	containerID, err := h.containers.CreateServiceContainer(r.Context(), container.ServiceConfig{
 		Name:         containerName,
 		Image:        *svc.ImageTag,
-		Port:         int(svc.Port),
+		Port:         port,
 		EnvVars:      envVars,
 		CPULimit:     int64(svc.CpuLimit),
 		MemoryLimit:  svc.MemoryLimit,
