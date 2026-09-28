@@ -115,7 +115,7 @@ func ParseBlueprint(data []byte) (*Blueprint, error) {
 				svc.Type = "worker"
 			case "cron":
 				svc.Type = "cron"
-			case "static":
+			case "static", "frontend":
 				svc.Type = "static"
 			default:
 				svc.Type = "web"
@@ -129,6 +129,9 @@ func ParseBlueprint(data []byte) (*Blueprint, error) {
 			svc.Env = env
 		} else if rt, ok := rawSvc["runtime"].(string); ok {
 			svc.Env = rt
+		}
+		if svc.Type == "static" && svc.Env == "" {
+			svc.Env = "static"
 		}
 
 		// Root Directory (Monorepo support)
@@ -313,10 +316,10 @@ func ParseBlueprint(data []byte) (*Blueprint, error) {
 			}
 		}
 
-		// Fallback default ports: 3000 for web/static
+		// Fallback default ports: 80 for static, 3000 for web
 		if svc.Port == 0 {
 			if svc.Type == "static" {
-				svc.Port = 3000
+				svc.Port = 80
 			} else {
 				svc.Port = 3000
 			}

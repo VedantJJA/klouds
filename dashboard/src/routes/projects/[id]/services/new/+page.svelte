@@ -53,7 +53,7 @@
   // Service Draft model
   interface ServiceDraft {
     name: string;
-    type: 'web' | 'frontend' | 'worker' | 'cron';
+    type: 'static' | 'web' | 'worker' | 'cron';
     runtime_language: string;
     runtime_version: string;
     use_custom_version: boolean;
@@ -72,12 +72,12 @@
     env_mode: 'form' | 'raw';
   }
 
-  function createDefaultService(name = 'web-app', type: 'web' | 'frontend' | 'worker' | 'cron' = 'frontend'): ServiceDraft {
+  function createDefaultService(name = 'web-app', type: 'static' | 'web' | 'worker' | 'cron' = 'static'): ServiceDraft {
     return {
       name,
       type,
-      runtime_language: type === 'frontend' ? 'static' : 'nodejs',
-      runtime_version: type === 'frontend' ? 'latest' : '20',
+      runtime_language: type === 'static' ? 'static' : 'nodejs',
+      runtime_version: type === 'static' ? 'latest' : '20',
       use_custom_version: false,
       custom_runtime_version: '',
       repo_url: '',
@@ -86,7 +86,7 @@
       dockerfile_path: 'Dockerfile',
       build_command: '',
       start_command: '',
-      port: type === 'frontend' ? 80 : 3000,
+      port: type === 'static' ? 80 : 3000,
       health_check_path: '/health',
       auto_deploy: true,
       env_list: [{ key: 'NODE_ENV', value: 'production', isSecret: false }],
@@ -95,7 +95,7 @@
     };
   }
 
-  let services = $state<ServiceDraft[]>([createDefaultService('web-app', 'frontend')]);
+  let services = $state<ServiceDraft[]>([createDefaultService('web-app', 'static')]);
   let activeServiceIdx = $state(0);
   let activeService = $derived(services[activeServiceIdx] || services[0]);
 
@@ -110,6 +110,7 @@
 
   // Allowed engines mapped strictly to service types
   const allowedEnginesByType: Record<string, string[]> = {
+    static: ['static', 'nodejs', 'dockerfile'],
     frontend: ['static', 'nodejs', 'dockerfile'],
     web: ['nodejs', 'python', 'go', 'rust', 'php', 'ruby', 'java', 'dockerfile'],
     worker: ['nodejs', 'python', 'go', 'rust', 'php', 'ruby', 'java', 'dockerfile'],
@@ -364,15 +365,15 @@
     }
   }
 
-  function handleServiceTypeChange(newType: 'web' | 'frontend' | 'worker' | 'cron') {
+  function handleServiceTypeChange(newType: 'static' | 'web' | 'worker' | 'cron') {
     activeService.type = newType;
     const allowed = allowedEnginesByType[newType] || allowedEnginesByType.web;
     if (!allowed.includes(activeService.runtime_language)) {
       handleLanguageChange(allowed[0]);
     }
-    if (newType === 'frontend' && activeService.port === 3000) {
+    if (newType === 'static' && (activeService.port === 3000 || !activeService.port)) {
       activeService.port = 80;
-    } else if (newType === 'web' && activeService.port === 80) {
+    } else if (newType === 'web' && (activeService.port === 80 || !activeService.port)) {
       activeService.port = 3000;
     }
   }
@@ -381,7 +382,11 @@
     activeService.runtime_language = langKey;
     const opt = runtimeOptions[langKey];
     if (opt) {
-      activeService.port = opt.defaultPort;
+      if (activeService.type === 'static' && langKey === 'static') {
+        activeService.port = 80;
+      } else if (opt.defaultPort) {
+        activeService.port = opt.defaultPort;
+      }
       activeService.runtime_version = opt.versions[0]?.val || '';
     }
     if (activeService.use_custom_version) {
@@ -431,18 +436,82 @@
     try {
       const res = await api.detectBlueprint(projectId, activeService.repo_url, activeService.branch);
       if (res && res.blueprint && res.blueprint.services && res.blueprint.services.length > 0) {
-        const detectedDrafts: ServiceDraft[] = res.blueprint.services.map((svc, idx) => {
+        const detectedDrafts: ServiceDraft[] = res.blueprint.services.map((svc: any, idx: number) => {
+          const rawType = (svc.type || '').toLowerCase();
+          const svcType: 'static' | 'web' | 'worker' | 'cron' =
+            (rawType === 'static' || rawType === 'frontend') ? 'static' :
+            (rawType === 'worker') ? 'worker' :
+            (rawType === 'cron') ? 'cron' : 'web';
+
+          // Detect runtime language from svc.env, svc.build_method, or inspection
           let lang = 'nodejs';
+          const env = (svc.env || '').toLowerCase();
           const bm = (svc.build_method || '').toLowerCase();
           const rd = (svc.root_dir || '').toLowerCase();
-          if (bm === 'dockerfile') lang = 'dockerfile';
-          else if (rd.includes('python') || rd.includes('backend') || rd.includes('py')) lang = 'python';
-          else if (rd.includes('go')) lang = 'go';
-          else if (svc.type === 'frontend') lang = 'static';
+          const name = (svc.name || '').toLowerCase();
+          const cmds = `${svc.build_command || ''} ${svc.start_command || ''}`.toLowerCase();
+
+          if (bm === 'dockerfile' || env === 'docker' || env === 'dockerfile') {
+            lang = 'dockerfile';
+          } else if (env === 'static' || svcType === 'static') {
+            lang = 'static';
+          } else if (env === 'node' || env === 'nodejs') {
+            lang = 'nodejs';
+          } else if (env === 'python' || env === 'py') {
+            lang = 'python';
+          } else if (env === 'go' || env === 'golang') {
+            lang = 'go';
+          } else if (env === 'rust') {
+            lang = 'rust';
+          } else if (env === 'php') {
+            lang = 'php';
+          } else if (env === 'ruby') {
+            lang = 'ruby';
+          } else if (env === 'java' || env === 'jvm') {
+            lang = 'java';
+          } else {
+            // Infer from commands or filenames if env is missing
+            if (cmds.includes('cargo')) lang = 'rust';
+            else if (cmds.includes('go build') || cmds.includes('go run')) lang = 'go';
+            else if (cmds.includes('pip') || cmds.includes('gunicorn') || cmds.includes('uvicorn') || cmds.includes('python')) lang = 'python';
+            else if (cmds.includes('mvn') || cmds.includes('gradle') || cmds.includes('java ')) lang = 'java';
+            else if (cmds.includes('composer') || cmds.includes('php')) lang = 'php';
+            else if (cmds.includes('rails') || cmds.includes('bundle')) lang = 'ruby';
+            else if (cmds.includes('npm') || cmds.includes('node') || cmds.includes('yarn') || cmds.includes('pnpm')) lang = 'nodejs';
+            else if (name.includes('python') || rd.includes('python') || rd.includes('py-')) lang = 'python';
+            else if (name.includes('golang') || rd.includes('golang') || rd.includes('go-')) lang = 'go';
+            else if (name.includes('rust') || rd.includes('rust')) lang = 'rust';
+            else if (svcType === 'static') lang = 'static';
+            else lang = 'nodejs';
+          }
+
+          // Parse env vars properly whether it's an array of {key, value} or an object map {KEY: VAL}
+          let envList: Array<{ key: string; value: string; isSecret: boolean }> = [];
+          if (Array.isArray(svc.env_vars)) {
+            envList = svc.env_vars
+              .filter((ev: any) => ev && ev.key)
+              .map((ev: any) => ({
+                key: String(ev.key),
+                value: ev.value !== undefined ? String(ev.value) : '',
+                isSecret: String(ev.key).includes('SECRET') || String(ev.key).includes('KEY') || String(ev.key).includes('PASS')
+              }));
+          } else if (svc.env_vars && typeof svc.env_vars === 'object') {
+            envList = Object.entries(svc.env_vars).map(([key, value]) => ({
+              key,
+              value: typeof value === 'object' ? JSON.stringify(value) : String(value || ''),
+              isSecret: key.includes('SECRET') || key.includes('KEY') || key.includes('PASS')
+            }));
+          }
+
+          const rawEnv = envList.map(e => `${e.key}=${e.value}`).join('\n') + (envList.length ? '\n' : '');
+
+          const port = svc.port || (svcType === 'static' ? 80 : (lang === 'python' ? 8000 : 3000));
+          const buildCmd = svc.build_command !== undefined ? svc.build_command : (svcType === 'static' ? 'npm run build' : '');
+          const startCmd = svc.start_command !== undefined ? svc.start_command : '';
 
           return {
             name: svc.name || `service-${idx + 1}`,
-            type: (svc.type as any) || (idx === 0 ? 'frontend' : 'web'),
+            type: svcType,
             runtime_language: lang,
             runtime_version: '',
             use_custom_version: false,
@@ -450,14 +519,14 @@
             repo_url: activeService.repo_url,
             branch: res.detected_branch || activeService.branch || 'main',
             root_dir: svc.root_dir || '.',
-            dockerfile_path: 'Dockerfile',
-            build_command: svc.build_command || '',
-            start_command: svc.start_command || '',
-            port: svc.port || (svc.type === 'frontend' ? 80 : 3000),
-            health_check_path: '/health',
-            auto_deploy: true,
-            env_list: Object.entries(svc.env_vars || {}).map(([key, value]) => ({ key, value, isSecret: false })),
-            raw_env: Object.entries(svc.env_vars || {}).map(([k, v]) => `${k}=${v}`).join('\n') + '\n',
+            dockerfile_path: svc.dockerfile_path || 'Dockerfile',
+            build_command: buildCmd,
+            start_command: startCmd,
+            port,
+            health_check_path: svc.health_check_path || '/health',
+            auto_deploy: svc.auto_deploy !== undefined ? !!svc.auto_deploy : true,
+            env_list: envList,
+            raw_env: rawEnv,
             env_mode: 'form'
           };
         });
@@ -701,7 +770,7 @@
           >
             <span class="service-tab-num">{idx + 1}</span>
             <span class="service-tab-title">{svc.name || `Service ${idx + 1}`}</span>
-            <span class="service-tab-badge badge-{svc.type}">{svc.type}</span>
+            <span class="service-tab-badge">{svc.type}</span>
           </button>
           {#if services.length > 1}
             <button
@@ -912,10 +981,10 @@
             <select
               id="svc-type"
               class="form-select"
-              value={activeService.type}
+              value={activeService.type === 'frontend' ? 'static' : activeService.type}
               onchange={(e) => handleServiceTypeChange((e.target as HTMLSelectElement).value as any)}
             >
-              <option value="frontend">Static Site / Frontend App (SPA / HTML / Vite)</option>
+              <option value="static">Static Site / Frontend App (SPA / HTML / Vite)</option>
               <option value="web">Web Service / Backend API (Public HTTP endpoint)</option>
               <option value="worker">Background Worker (Queue processor / internal job)</option>
               <option value="cron">Scheduled Job (Cron trigger)</option>
@@ -1172,7 +1241,7 @@
                 <div class="flex items-center gap-2">
                   <span class="service-tab-num">{idx + 1}</span>
                   <h4 class="m-0 font-semibold">{svc.name}</h4>
-                  <span class="service-tab-badge badge-{svc.type}">{svc.type}</span>
+                  <span class="service-tab-badge">{svc.type}</span>
                 </div>
 
                 {#if svc.type !== 'worker' && svc.type !== 'cron'}
@@ -1351,17 +1420,15 @@
 
   .service-tab-badge {
     font-size: 0.625rem;
-    padding: 1px 6px;
+    padding: 2px 6px;
     border-radius: 4px;
     text-transform: uppercase;
     font-weight: 600;
+    background: var(--color-surface-subtle);
+    color: var(--color-ink-secondary);
     border: 1px solid var(--color-border);
+    letter-spacing: 0.04em;
   }
-
-  .badge-frontend { background: rgba(56, 189, 248, 0.12); color: #38bdf8; border-color: rgba(56, 189, 248, 0.3); }
-  .badge-web { background: rgba(255, 255, 255, 0.1); color: var(--color-ink); border-color: var(--color-border); }
-  .badge-worker { background: rgba(251, 191, 36, 0.12); color: #fbbf24; border-color: rgba(251, 191, 36, 0.3); }
-  .badge-cron { background: rgba(168, 85, 247, 0.12); color: #c084fc; border-color: rgba(168, 85, 247, 0.3); }
 
   .tab-close-btn {
     background: none;

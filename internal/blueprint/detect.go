@@ -257,8 +257,30 @@ func inspectServiceDirectory(rootPath, relDir, fullPath string) (ServiceDefiniti
 		}, true
 	}
 
+	// Check for frontend static SPA or static HTML
+	lowerRel := strings.ToLower(relDir)
+	lowerName := strings.ToLower(name)
+	isFrontend := lowerRel == "frontend" || lowerRel == "client" || lowerRel == "ui" ||
+		strings.Contains(lowerName, "frontend") || strings.Contains(lowerName, "client") || strings.Contains(lowerName, "ui") ||
+		fileExists(filepath.Join(fullPath, "vite.config.ts")) || fileExists(filepath.Join(fullPath, "vite.config.js")) ||
+		fileExists(filepath.Join(fullPath, "vite.config.mjs")) || fileExists(filepath.Join(fullPath, "astro.config.mjs")) ||
+		fileExists(filepath.Join(fullPath, "svelte.config.js"))
+
 	// Check for Node.js
 	if fileExists(filepath.Join(fullPath, "package.json")) {
+		if isFrontend {
+			return ServiceDefinition{
+				Name:         name,
+				Type:         "static",
+				Env:          "static",
+				BuildMethod:  "nixpacks",
+				RootDir:      relDir,
+				BuildCommand: "npm install && npm run build",
+				StartCommand: "",
+				Port:         80,
+			}, true
+		}
+
 		port := int32(3000)
 		if strings.Contains(name, "api") || strings.Contains(name, "backend") {
 			port = 8080
@@ -272,6 +294,20 @@ func inspectServiceDirectory(rootPath, relDir, fullPath string) (ServiceDefiniti
 			BuildCommand: "npm run build",
 			StartCommand: "npm start",
 			Port:         port,
+		}, true
+	}
+
+	// Check for Pure static HTML
+	if fileExists(filepath.Join(fullPath, "index.html")) {
+		return ServiceDefinition{
+			Name:         name,
+			Type:         "static",
+			Env:          "static",
+			BuildMethod:  "nixpacks",
+			RootDir:      relDir,
+			BuildCommand: "",
+			StartCommand: "",
+			Port:         80,
 		}, true
 	}
 
@@ -294,24 +330,28 @@ func inspectServiceDirectory(rootPath, relDir, fullPath string) (ServiceDefiniti
 		fileExists(filepath.Join(fullPath, "pyproject.toml")) ||
 		fileExists(filepath.Join(fullPath, "Pipfile")) {
 		return ServiceDefinition{
-			Name:        name,
-			Type:        "web",
-			Env:         "python",
-			BuildMethod: "nixpacks",
-			RootDir:     relDir,
-			Port:        8000,
+			Name:         name,
+			Type:         "web",
+			Env:          "python",
+			BuildMethod:  "nixpacks",
+			RootDir:      relDir,
+			BuildCommand: "pip install -r requirements.txt",
+			StartCommand: "python main.py",
+			Port:         8000,
 		}, true
 	}
 
 	// Check for Rust
 	if fileExists(filepath.Join(fullPath, "Cargo.toml")) {
 		return ServiceDefinition{
-			Name:        name,
-			Type:        "web",
-			Env:         "rust",
-			BuildMethod: "nixpacks",
-			RootDir:     relDir,
-			Port:        8080,
+			Name:         name,
+			Type:         "web",
+			Env:          "rust",
+			BuildMethod:  "nixpacks",
+			RootDir:      relDir,
+			BuildCommand: "cargo build --release",
+			StartCommand: "./target/release/server",
+			Port:         8080,
 		}, true
 	}
 
