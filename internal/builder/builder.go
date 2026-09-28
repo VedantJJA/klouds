@@ -166,8 +166,17 @@ func (e *Engine) Build(ctx context.Context, opts BuildOptions) (*BuildResult, er
 		// Use Nixpacks
 		appendLog("[klouds-builder] Building via Nixpacks engine...")
 		nixArgs := []string{"build", buildDir, "--name", imageTag}
-		if opts.BuildCommand != "" {
-			nixArgs = append(nixArgs, "--build-cmd", opts.BuildCommand)
+		buildCmd := opts.BuildCommand
+		if buildCmd != "" {
+			// Strip redundant npm install from buildCmd since Nixpacks already executes the install phase
+			if strings.HasPrefix(buildCmd, "npm install && ") {
+				buildCmd = strings.TrimPrefix(buildCmd, "npm install && ")
+			} else if strings.HasPrefix(buildCmd, "npm i && ") {
+				buildCmd = strings.TrimPrefix(buildCmd, "npm i && ")
+			} else if strings.HasPrefix(buildCmd, "npm ci && ") {
+				buildCmd = strings.TrimPrefix(buildCmd, "npm ci && ")
+			}
+			nixArgs = append(nixArgs, "--build-cmd", buildCmd)
 		}
 		if opts.StartCommand != "" {
 			nixArgs = append(nixArgs, "--start-cmd", opts.StartCommand)
@@ -184,9 +193,9 @@ func (e *Engine) Build(ctx context.Context, opts BuildOptions) (*BuildResult, er
 					effectiveEnvVars["NIXPACKS_NODE_VERSION"] = "22"
 				}
 			}
-			// Ensure npm 10 is used so platform-specific native binaries (e.g. linux-arm64 rolldown) install properly
+			// Ensure npm uses --include=optional and installs native arm64 binding for rolldown/vite
 			if !fileExists(filepath.Join(buildDir, "pnpm-lock.yaml")) && !fileExists(filepath.Join(buildDir, "yarn.lock")) {
-				installCmd = "npm install -g npm@10 && npm ci"
+				installCmd = "npm install --include=optional && (npm install @rolldown/binding-linux-arm64-gnu || true)"
 			}
 		}
 
@@ -216,8 +225,8 @@ func (e *Engine) Build(ctx context.Context, opts BuildOptions) (*BuildResult, er
 			if installCmd != "" {
 				dockerArgs = append(dockerArgs, "--install-cmd", installCmd)
 			}
-			if opts.BuildCommand != "" {
-				dockerArgs = append(dockerArgs, "--build-cmd", opts.BuildCommand)
+			if buildCmd != "" {
+				dockerArgs = append(dockerArgs, "--build-cmd", buildCmd)
 			}
 			if opts.StartCommand != "" {
 				dockerArgs = append(dockerArgs, "--start-cmd", opts.StartCommand)

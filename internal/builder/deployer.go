@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -73,6 +74,13 @@ func (d *Deployer) Deploy(ctx context.Context, req DeployRequest) error {
 		port = 3000
 	}
 
+	if req.EnvVars == nil {
+		req.EnvVars = make(map[string]string)
+	}
+	if _, ok := req.EnvVars["NODE_OPTIONS"]; !ok {
+		req.EnvVars["NODE_OPTIONS"] = "--experimental-require-module"
+	}
+
 	cfg := container.ServiceConfig{
 		Name:         newContainerName,
 		Image:        req.ImageTag,
@@ -113,9 +121,15 @@ func (d *Deployer) Deploy(ctx context.Context, req DeployRequest) error {
 			Str("target", containerTarget).
 			Msg("New container failed healthcheck. Rolling back...")
 
+		containerLogs, _ := d.containers.GetContainerLogsString(ctx, newContainerID, "50")
 		_ = d.containers.StopContainer(ctx, newContainerID)
 		_ = d.containers.RemoveContainer(ctx, newContainerID)
-		_ = d.failDeployment(ctx, req.DeploymentID, "Healthcheck probe timed out after 30 seconds.")
+
+		failMsg := "Healthcheck probe timed out after 30 seconds."
+		if containerLogs != "" {
+			failMsg = fmt.Sprintf("Healthcheck probe timed out after 30 seconds.\n[klouds-container-logs]\n%s", strings.TrimSpace(containerLogs))
+		}
+		_ = d.failDeployment(ctx, req.DeploymentID, failMsg)
 		return fmt.Errorf("healthcheck failed for new deployment")
 	}
 

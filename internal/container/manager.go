@@ -278,6 +278,18 @@ func (m *Manager) ContainerLogs(ctx context.Context, containerID string, tail st
 	})
 }
 
+// GetContainerLogsString returns recent container logs as a string.
+func (m *Manager) GetContainerLogsString(ctx context.Context, containerID string, tail string) (string, error) {
+	rc, err := m.ContainerLogs(ctx, containerID, tail)
+	if err != nil {
+		return "", err
+	}
+	defer rc.Close()
+	buf := new(strings.Builder)
+	_, _ = io.Copy(buf, rc)
+	return buf.String(), nil
+}
+
 // ContainerLogsFollow returns a streaming reader for live logs.
 func (m *Manager) ContainerLogsFollow(ctx context.Context, containerID string) (io.ReadCloser, error) {
 	return m.client.ContainerLogs(ctx, containerID, mobyclient.ContainerLogsOptions{
