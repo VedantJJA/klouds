@@ -172,6 +172,7 @@ type DatabaseConfig struct {
 	DiskLimit    int64
 	DataVolume   string // Host path for data persistence
 	NetworkAlias string
+	Labels       map[string]string
 }
 
 // CreateDatabaseContainer creates and starts a database container.
@@ -187,6 +188,11 @@ func (m *Manager) CreateDatabaseContainer(ctx context.Context, cfg DatabaseConfi
 		"managed-by":    "klouds",
 		"klouds.type":   "database",
 		"klouds.engine": cfg.Engine,
+	}
+	if cfg.Labels != nil {
+		for k, v := range cfg.Labels {
+			labels[k] = v
+		}
 	}
 
 	exposedPorts := make(mobynetwork.PortSet)
@@ -266,6 +272,121 @@ func (m *Manager) RemoveContainer(ctx context.Context, containerID string) error
 		RemoveVolumes: false, // Keep data volumes
 	})
 	return err
+}
+
+// OrphanCriteria defines the active references in the system.
+// Any Klouds-managed container that does not match ANY of these criteria is considered orphaned.
+type OrphanCriteria struct {
+	ActiveContainerIDs map[string]bool
+	ActiveServiceIDs   map[string]bool
+	ActiveDatabaseIDs  map[string]bool
+	ActiveDBHosts      map[string]bool
+}
+
+var protectedContainerNames = map[string]bool{
+	"klouds-postgres": true,
+	"klouds-api":      true,
+	"klouds-web":      true,
+	"klouds-traefik":  true,
+	"klouds-sablier":  true,
+	"klouds-agent":    true,
+	"traefik":         true,
+}
+
+// PruneOrphanContainers stops and removes all unreferenced Docker containers managed by Klouds.
+// Containers created less than minAge ago are preserved (in-flight deployment protection).
+func (m *Manager) PruneOrphanContainers(ctx context.Context, criteria OrphanCriteria, minAge time.Duration) ([]string, error) {
+	containers, err := m.client.ContainerList(ctx, mobyclient.ContainerListOptions{All: true})
+	if err != nil {
+		return nil, fmt.Errorf("list containers for pruning: %w", err)
+	}
+
+	var pruned []string
+	now := time.Now()
+
+	for _, c := range containers.Items {
+		// 1. Identify primary name
+		name := ""
+		if len(c.Names) > 0 {
+			name = strings.TrimPrefix(c.Names[0], "/")
+		}
+
+		// 2. Platform infrastructure containers are strictly protected
+		if protectedContainerNames[name] {
+			continue
+		}
+		if proj, ok := c.Labels["com.docker.compose.project"]; ok && proj == "klouds-platform" {
+			continue
+		}
+
+		// 3. Check if container is managed by Klouds
+		isManaged := false
+		if val, ok := c.Labels["managed-by"]; ok && val == "klouds" {
+			isManaged = true
+		}
+		if strings.HasPrefix(name, "klouds-svc-") || strings.HasPrefix(name, "klouds-db-") {
+			isManaged = true
+		}
+		if !isManaged {
+			continue
+		}
+
+		// 4. In-flight protection
+		if minAge > 0 {
+			createdTime := time.Unix(c.Created, 0)
+			if now.Sub(createdTime) < minAge {
+				continue
+			}
+		}
+
+		// 5. Check if referenced by active container ID (full or 12-char prefix)
+		cid := c.ID
+		cidShort := cid
+		if len(cidShort) > 12 {
+			cidShort = cidShort[:12]
+		}
+		if criteria.ActiveContainerIDs[cid] || criteria.ActiveContainerIDs[cidShort] {
+			continue
+		}
+
+		// 6. Check if referenced by active service ID
+		if svcID, ok := c.Labels["klouds.service.id"]; ok && svcID != "" {
+			if criteria.ActiveServiceIDs[svcID] {
+				continue
+			}
+		}
+
+		// 7. Check if referenced by active database ID
+		if dbID, ok := c.Labels["klouds.database.id"]; ok && dbID != "" {
+			if criteria.ActiveDatabaseIDs[dbID] {
+				continue
+			}
+		}
+
+		// 8. Check if referenced by active database internal host name
+		if strings.HasPrefix(name, "klouds-db-") {
+			dbHost := strings.TrimPrefix(name, "klouds-db-")
+			if criteria.ActiveDBHosts[dbHost] {
+				continue
+			}
+		}
+
+		// 9. Container is unreferenced! Gracefully stop and force remove.
+		log.Info().
+			Str("container_id", cidShort).
+			Str("name", name).
+			Str("status", c.Status).
+			Msg("Pruning unreferenced container")
+
+		_ = m.StopContainer(ctx, cid)
+		if removeErr := m.RemoveContainer(ctx, cid); removeErr != nil {
+			log.Warn().Err(removeErr).Str("container_id", cidShort).Msg("Failed to remove unreferenced container")
+		} else {
+			pruned = append(pruned, cidShort)
+		}
+	}
+
+	return pruned, nil
 }
 
 // ContainerLogs returns a reader for a container's logs.

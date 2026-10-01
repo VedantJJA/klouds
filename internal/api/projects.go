@@ -2,26 +2,38 @@ package api
 
 import (
 	"context"
+	"fmt"
 	"net/http"
 	"regexp"
 	"strings"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/rs/zerolog/log"
+	"github.com/vedant/klouds/internal/caddy"
+	"github.com/vedant/klouds/internal/cleaner"
+	"github.com/vedant/klouds/internal/container"
 	"github.com/vedant/klouds/internal/db"
 )
 
 // ProjectHandler handles project CRUD operations.
 type ProjectHandler struct {
-	queries *db.Queries
-	pool    *pgxpool.Pool
+	queries    *db.Queries
+	pool       *pgxpool.Pool
+	containers *container.Manager
+	caddy      *caddy.Manager
+	cleaner    *cleaner.Cleaner
 }
 
 // NewProjectHandler creates a new project handler.
-func NewProjectHandler(pool *pgxpool.Pool) *ProjectHandler {
+func NewProjectHandler(pool *pgxpool.Pool, containers *container.Manager, caddyMgr *caddy.Manager, cln *cleaner.Cleaner) *ProjectHandler {
 	return &ProjectHandler{
-		queries: db.New(pool),
-		pool:    pool,
+		queries:    db.New(pool),
+		pool:       pool,
+		containers: containers,
+		caddy:      caddyMgr,
+		cleaner:    cln,
 	}
 }
 
@@ -130,10 +142,55 @@ func (h *ProjectHandler) Delete(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// CASCADE will delete services and databases under this project
+	// 1. Fetch all services belonging to this project
+	services, err := h.queries.ListServicesByProject(r.Context(), projectID)
+	if err != nil {
+		log.Error().Err(err).Str("project_id", projectID).Msg("failed to list services for project deletion")
+	}
+
+	// 2. Fetch all databases belonging to this project
+	databases, err := h.queries.ListDatabasesByProject(r.Context(), projectID)
+	if err != nil {
+		log.Error().Err(err).Str("project_id", projectID).Msg("failed to list databases for project deletion")
+	}
+
+	// 3. Stop and remove all service containers, remove Caddy routes
+	for _, svc := range services {
+		if svc.ContainerID != nil && *svc.ContainerID != "" && h.containers != nil {
+			_ = h.containers.StopContainer(r.Context(), *svc.ContainerID)
+			_ = h.containers.RemoveContainer(r.Context(), *svc.ContainerID)
+		}
+		if svc.Subdomain != "" && h.caddy != nil {
+			_ = h.caddy.RemoveRoute(svc.Subdomain)
+		}
+	}
+
+	// 4. Stop and remove all database containers
+	for _, dbRecord := range databases {
+		if dbRecord.ContainerID != nil && *dbRecord.ContainerID != "" && h.containers != nil {
+			_ = h.containers.StopContainer(r.Context(), *dbRecord.ContainerID)
+			_ = h.containers.RemoveContainer(r.Context(), *dbRecord.ContainerID)
+		}
+		if h.containers != nil {
+			dbName := fmt.Sprintf("klouds-db-%s", dbRecord.InternalHost)
+			_ = h.containers.StopContainer(r.Context(), dbName)
+			_ = h.containers.RemoveContainer(r.Context(), dbName)
+		}
+	}
+
+	// 5. Delete project from DB (CASCADE deletes services and databases rows in PostgreSQL)
 	if err := h.queries.DeleteProject(r.Context(), projectID); err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to delete project")
 		return
+	}
+
+	// 6. Prune any remaining unreferenced containers and Caddy routes in background
+	if h.cleaner != nil {
+		go func() {
+			ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+			defer cancel()
+			_, _ = h.cleaner.PruneAll(ctx, 0)
+		}()
 	}
 
 	writeJSON(w, http.StatusOK, map[string]string{"message": "project deleted"})

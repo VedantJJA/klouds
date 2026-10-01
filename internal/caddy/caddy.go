@@ -238,6 +238,59 @@ func (m *Manager) RemoveRoute(subdomain string) error {
 	return nil
 }
 
+// PruneOrphanRoutes queries all dynamic routes in Caddy and removes any whose @id starts with "route-"
+// but whose subdomain is not present in activeSubdomains.
+func (m *Manager) PruneOrphanRoutes(activeSubdomains []string) ([]string, error) {
+	activeMap := make(map[string]bool)
+	for _, sub := range activeSubdomains {
+		sub = strings.TrimSpace(strings.ToLower(sub))
+		if sub != "" {
+			activeMap[sub] = true
+		}
+	}
+
+	req, err := http.NewRequest("GET", fmt.Sprintf("%s/config/apps/http/servers/srv0/routes", m.adminAPI), nil)
+	if err != nil {
+		return nil, err
+	}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode == http.StatusNotFound {
+		return nil, nil
+	}
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("caddy routes returned status %d", resp.StatusCode)
+	}
+
+	var routes []map[string]interface{}
+	if err := json.NewDecoder(resp.Body).Decode(&routes); err != nil {
+		return nil, fmt.Errorf("decode caddy routes: %w", err)
+	}
+
+	var pruned []string
+	for _, route := range routes {
+		id, ok := route["@id"].(string)
+		if !ok || !strings.HasPrefix(id, "route-") {
+			continue
+		}
+		subdomain := strings.TrimPrefix(id, "route-")
+		if !activeMap[strings.ToLower(subdomain)] {
+			log.Info().Str("subdomain", subdomain).Msg("Pruning unreferenced Caddy route")
+			if err := m.RemoveRoute(subdomain); err != nil {
+				log.Warn().Err(err).Str("subdomain", subdomain).Msg("Failed to remove unreferenced Caddy route")
+			} else {
+				pruned = append(pruned, subdomain)
+			}
+		}
+	}
+
+	return pruned, nil
+}
+
 // buildRouteHandlers creates the Caddy handler chain for a route, maintaining strict evaluation order and supporting external rewrites.
 func buildRouteHandlers(upstream string, orderedRules []OrderedRule, redirects []RedirectRule, rewrites []RewriteRule) []map[string]interface{} {
 	// Consolidate into unified ordered list if legacy slices are used

@@ -2,10 +2,13 @@ package api
 
 import (
 	"context"
+	"fmt"
 	"net/http"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/vedant/klouds/internal/cleaner"
 	"github.com/vedant/klouds/internal/container"
 	"github.com/vedant/klouds/internal/db"
 )
@@ -15,14 +18,16 @@ type AdminHandler struct {
 	queries    *db.Queries
 	pool       *pgxpool.Pool
 	containers *container.Manager
+	cleaner    *cleaner.Cleaner
 }
 
 // NewAdminHandler creates a new admin handler.
-func NewAdminHandler(pool *pgxpool.Pool, containers *container.Manager) *AdminHandler {
+func NewAdminHandler(pool *pgxpool.Pool, containers *container.Manager, cln *cleaner.Cleaner) *AdminHandler {
 	return &AdminHandler{
 		queries:    db.New(pool),
 		pool:       pool,
 		containers: containers,
+		cleaner:    cln,
 	}
 }
 
@@ -86,7 +91,7 @@ func (h *AdminHandler) UpdateUserStatus(w http.ResponseWriter, r *http.Request) 
 
 	// If user is being suspended, stop their containers
 	if req.Status == "suspended" {
-		go h.stopUserContainers(userID)
+		go h.stopUserContainers(context.Background(), userID)
 	}
 
 	writeJSON(w, http.StatusOK, toUserDTO(user))
@@ -102,12 +107,20 @@ func (h *AdminHandler) DeleteUser(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Stop user's containers first
-	go h.stopUserContainers(userID)
+	// Stop and remove user's containers synchronously before DB delete
+	h.stopUserContainers(r.Context(), userID)
 
 	if err := h.queries.DeleteUser(r.Context(), userID); err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to delete user")
 		return
+	}
+
+	if h.cleaner != nil {
+		go func() {
+			ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+			defer cancel()
+			_, _ = h.cleaner.PruneAll(ctx, 0)
+		}()
 	}
 
 	writeJSON(w, http.StatusOK, map[string]string{"message": "user deleted"})
@@ -191,29 +204,48 @@ func (h *AdminHandler) ListAllDeployments(w http.ResponseWriter, r *http.Request
 	writeJSON(w, http.StatusOK, deployments)
 }
 
-// stopUserContainers stops all containers owned by a user (runs in background).
-func (h *AdminHandler) stopUserContainers(userID string) {
-	ctx := context.Background()
-
-	services, err := h.queries.ListServicesByUser(ctx, userID)
-	if err != nil {
+// stopUserContainers stops and removes all containers owned by a user.
+func (h *AdminHandler) stopUserContainers(ctx context.Context, userID string) {
+	if h.containers == nil {
 		return
 	}
 
-	for _, svc := range services {
-		if svc.ContainerID != nil && *svc.ContainerID != "" {
-			_ = h.containers.StopContainer(ctx, *svc.ContainerID)
+	services, err := h.queries.ListServicesByUser(ctx, userID)
+	if err == nil {
+		for _, svc := range services {
+			if svc.ContainerID != nil && *svc.ContainerID != "" {
+				_ = h.containers.StopContainer(ctx, *svc.ContainerID)
+				_ = h.containers.RemoveContainer(ctx, *svc.ContainerID)
+			}
 		}
 	}
 
 	databases, err := h.queries.ListDatabasesByUser(ctx, userID)
-	if err != nil {
+	if err == nil {
+		for _, dbInst := range databases {
+			if dbInst.ContainerID != nil && *dbInst.ContainerID != "" {
+				_ = h.containers.StopContainer(ctx, *dbInst.ContainerID)
+				_ = h.containers.RemoveContainer(ctx, *dbInst.ContainerID)
+			}
+			dbName := fmt.Sprintf("klouds-db-%s", dbInst.InternalHost)
+			_ = h.containers.StopContainer(ctx, dbName)
+			_ = h.containers.RemoveContainer(ctx, dbName)
+		}
+	}
+}
+
+// PruneContainers handles POST /api/admin/containers/prune to manually purge unreferenced containers and routes.
+func (h *AdminHandler) PruneContainers(w http.ResponseWriter, r *http.Request) {
+	if h.cleaner == nil {
+		writeError(w, http.StatusServiceUnavailable, "cleaner service not available")
 		return
 	}
 
-	for _, dbInst := range databases {
-		if dbInst.ContainerID != nil && *dbInst.ContainerID != "" {
-			_ = h.containers.StopContainer(ctx, *dbInst.ContainerID)
-		}
+	result, err := h.cleaner.PruneAll(r.Context(), 0)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, fmt.Sprintf("prune failed: %v", err))
+		return
 	}
+
+	writeJSON(w, http.StatusOK, result)
 }

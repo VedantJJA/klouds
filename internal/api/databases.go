@@ -7,10 +7,12 @@ import (
 	"fmt"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/rs/zerolog/log"
+	"github.com/vedant/klouds/internal/cleaner"
 	"github.com/vedant/klouds/internal/container"
 	"github.com/vedant/klouds/internal/db"
 	"github.com/vedant/klouds/internal/secrets"
@@ -24,10 +26,11 @@ type DatabaseHandler struct {
 	encryptor  *secrets.Encryptor
 	domain     string
 	dataDir    string
+	cleaner    *cleaner.Cleaner
 }
 
 // NewDatabaseHandler creates a new database handler.
-func NewDatabaseHandler(pool *pgxpool.Pool, containers *container.Manager, enc *secrets.Encryptor, domain, dataDir string) *DatabaseHandler {
+func NewDatabaseHandler(pool *pgxpool.Pool, containers *container.Manager, enc *secrets.Encryptor, domain, dataDir string, cln *cleaner.Cleaner) *DatabaseHandler {
 	return &DatabaseHandler{
 		queries:    db.New(pool),
 		pool:       pool,
@@ -35,6 +38,7 @@ func NewDatabaseHandler(pool *pgxpool.Pool, containers *container.Manager, enc *
 		encryptor:  enc,
 		domain:     domain,
 		dataDir:    dataDir,
+		cleaner:    cln,
 	}
 }
 
@@ -354,14 +358,27 @@ func (h *DatabaseHandler) Delete(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Stop and remove container
-	if dbRecord.ContainerID != nil && *dbRecord.ContainerID != "" {
+	if dbRecord.ContainerID != nil && *dbRecord.ContainerID != "" && h.containers != nil {
 		_ = h.containers.StopContainer(r.Context(), *dbRecord.ContainerID)
 		_ = h.containers.RemoveContainer(r.Context(), *dbRecord.ContainerID)
+	}
+	if h.containers != nil {
+		containerName := fmt.Sprintf("klouds-db-%s", dbRecord.InternalHost)
+		_ = h.containers.StopContainer(r.Context(), containerName)
+		_ = h.containers.RemoveContainer(r.Context(), containerName)
 	}
 
 	if err := h.queries.DeleteDatabase(r.Context(), databaseID); err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to delete database")
 		return
+	}
+
+	if h.cleaner != nil {
+		go func() {
+			ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+			defer cancel()
+			_, _ = h.cleaner.PruneAll(ctx, 0)
+		}()
 	}
 
 	writeJSON(w, http.StatusOK, map[string]string{"message": "database deleted"})
@@ -387,6 +404,9 @@ func (h *DatabaseHandler) provisionDatabase(dbRecord db.Database, password strin
 		DiskLimit:    dbRecord.DiskLimit,
 		DataVolume:   dataVolume,
 		NetworkAlias: dbRecord.InternalHost,
+		Labels: map[string]string{
+			"klouds.database.id": dbRecord.ID,
+		},
 	})
 	if err != nil {
 		log.Error().Err(err).Str("database", dbRecord.Name).Msg("failed to provision database")

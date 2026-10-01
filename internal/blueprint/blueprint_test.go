@@ -201,7 +201,7 @@ services:
 	}
 
 	f := bp.Services[1]
-	if f.Name != "vtopcc" || f.RootDir != "frontend" || f.Type != "static" || f.Port != 3000 {
+	if f.Name != "vtopcc" || f.RootDir != "frontend" || f.Type != "static" || f.Port != 80 {
 		t.Errorf("unexpected frontend service: %+v", f)
 	}
 	if len(f.Routes) != 2 {

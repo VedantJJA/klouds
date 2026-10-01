@@ -14,6 +14,7 @@ import (
 	"github.com/rs/zerolog/log"
 	"github.com/vedant/klouds/internal/builder"
 	"github.com/vedant/klouds/internal/caddy"
+	"github.com/vedant/klouds/internal/cleaner"
 	"github.com/vedant/klouds/internal/container"
 	"github.com/vedant/klouds/internal/db"
 	"github.com/vedant/klouds/internal/secrets"
@@ -29,10 +30,11 @@ type ServiceHandler struct {
 	encryptor  *secrets.Encryptor
 	caddy      *caddy.Manager
 	domain     string // Base domain for subdomain routing
+	cleaner    *cleaner.Cleaner
 }
 
 // NewServiceHandler creates a new service handler.
-func NewServiceHandler(pool *pgxpool.Pool, containers *container.Manager, engine *builder.Engine, deployer *builder.Deployer, encryptor *secrets.Encryptor, caddyMgr *caddy.Manager, domain string) *ServiceHandler {
+func NewServiceHandler(pool *pgxpool.Pool, containers *container.Manager, engine *builder.Engine, deployer *builder.Deployer, encryptor *secrets.Encryptor, caddyMgr *caddy.Manager, domain string, cln *cleaner.Cleaner) *ServiceHandler {
 	return &ServiceHandler{
 		queries:    db.New(pool),
 		pool:       pool,
@@ -42,6 +44,7 @@ func NewServiceHandler(pool *pgxpool.Pool, containers *container.Manager, engine
 		encryptor:  encryptor,
 		caddy:      caddyMgr,
 		domain:     domain,
+		cleaner:    cln,
 	}
 }
 
@@ -775,14 +778,27 @@ func (h *ServiceHandler) Delete(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Stop and remove container
-	if svc.ContainerID != nil && *svc.ContainerID != "" {
+	if svc.ContainerID != nil && *svc.ContainerID != "" && h.containers != nil {
 		_ = h.containers.StopContainer(r.Context(), *svc.ContainerID)
 		_ = h.containers.RemoveContainer(r.Context(), *svc.ContainerID)
+	}
+
+	// Remove Caddy route
+	if svc.Subdomain != "" && h.caddy != nil {
+		_ = h.caddy.RemoveRoute(svc.Subdomain)
 	}
 
 	if err := h.queries.DeleteService(r.Context(), serviceID); err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to delete service")
 		return
+	}
+
+	if h.cleaner != nil {
+		go func() {
+			ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+			defer cancel()
+			_, _ = h.cleaner.PruneAll(ctx, 0)
+		}()
 	}
 
 	writeJSON(w, http.StatusOK, map[string]string{"message": "service deleted"})

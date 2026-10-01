@@ -17,6 +17,7 @@ import (
 	"github.com/vedant/klouds/internal/auth"
 	"github.com/vedant/klouds/internal/builder"
 	"github.com/vedant/klouds/internal/caddy"
+	"github.com/vedant/klouds/internal/cleaner"
 	"github.com/vedant/klouds/internal/config"
 	"github.com/vedant/klouds/internal/container"
 	"github.com/vedant/klouds/internal/db"
@@ -82,6 +83,10 @@ func main() {
 	// Initialize Caddy proxy manager
 	caddyMgr := caddy.NewManager(cfg.CaddyAdminAPI, cfg.Domain)
 
+	// Initialize Cleaner for unreferenced containers and routes GC
+	cleanerMgr := cleaner.New(pool, containerMgr, caddyMgr)
+	cleanerMgr.StartBackground(ctx, 10*time.Minute)
+
 	// Initialize Nixpacks build engine and blue-green deployer
 	buildEngine := builder.NewEngine(pool, cfg.DataDir)
 	deployer := builder.NewDeployer(pool, containerMgr, caddyMgr, cfg.Domain)
@@ -102,6 +107,7 @@ func main() {
 		Caddy:      caddyMgr,
 		Engine:     buildEngine,
 		Deployer:   deployer,
+		Cleaner:    cleanerMgr,
 		Domain:     cfg.Domain,
 		DataDir:    cfg.DataDir,
 		SecretKey:  cfg.SecretKey,

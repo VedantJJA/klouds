@@ -11,6 +11,7 @@ import (
 	"github.com/vedant/klouds/internal/auth"
 	"github.com/vedant/klouds/internal/builder"
 	"github.com/vedant/klouds/internal/caddy"
+	"github.com/vedant/klouds/internal/cleaner"
 	"github.com/vedant/klouds/internal/container"
 	"github.com/vedant/klouds/internal/db"
 	"github.com/vedant/klouds/internal/secrets"
@@ -26,6 +27,7 @@ type RouterConfig struct {
 	Caddy      *caddy.Manager
 	Engine     *builder.Engine
 	Deployer   *builder.Deployer
+	Cleaner    *cleaner.Cleaner
 	Domain     string
 	DataDir    string
 	SecretKey  string
@@ -57,12 +59,17 @@ func NewRouter(cfg RouterConfig) *chi.Mux {
 	r.Get("/health", healthFunc)
 	r.Head("/health", healthFunc)
 
+	cln := cfg.Cleaner
+	if cln == nil && cfg.Containers != nil {
+		cln = cleaner.New(cfg.Pool, cfg.Containers, cfg.Caddy)
+	}
+
 	// Initialize handlers
 	authHandler := NewAuthHandler(cfg.Pool, cfg.TokenSvc)
-	projectHandler := NewProjectHandler(cfg.Pool)
-	serviceHandler := NewServiceHandler(cfg.Pool, cfg.Containers, cfg.Engine, cfg.Deployer, cfg.Encryptor, cfg.Caddy, cfg.Domain)
-	dbHandler := NewDatabaseHandler(cfg.Pool, cfg.Containers, cfg.Encryptor, cfg.Domain, cfg.DataDir)
-	adminHandler := NewAdminHandler(cfg.Pool, cfg.Containers)
+	projectHandler := NewProjectHandler(cfg.Pool, cfg.Containers, cfg.Caddy, cln)
+	serviceHandler := NewServiceHandler(cfg.Pool, cfg.Containers, cfg.Engine, cfg.Deployer, cfg.Encryptor, cfg.Caddy, cfg.Domain, cln)
+	dbHandler := NewDatabaseHandler(cfg.Pool, cfg.Containers, cfg.Encryptor, cfg.Domain, cfg.DataDir, cln)
+	adminHandler := NewAdminHandler(cfg.Pool, cfg.Containers, cln)
 	metricsHandler := NewMetricsHandler()
 	webhookHandler := webhook.NewHandler(cfg.Pool, cfg.Engine, cfg.Deployer)
 	blueprintHandler := NewBlueprintHandler(cfg.Pool, cfg.DataDir, cfg.Encryptor, cfg.Containers, cfg.Engine, cfg.Deployer, cfg.Domain)
@@ -182,6 +189,9 @@ func NewRouter(cfg RouterConfig) *chi.Mux {
 
 				// System metrics
 				r.Get("/metrics/system", metricsHandler.GetSystemMetrics)
+
+				// Containers garbage collection
+				r.Post("/containers/prune", adminHandler.PruneContainers)
 
 				// Admin OAuth App configuration
 				r.Get("/oauth", oauthHandler.GetProviderConfigs)
