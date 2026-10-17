@@ -82,17 +82,23 @@
     loading = true;
     error = '';
     try {
-      const [sList, pList] = await Promise.all([
+      const [sRes, pRes] = await Promise.allSettled([
         api.listMinecraftServers(),
         api.listProjects()
       ]);
-      servers = sList || [];
-      projects = pList || [];
-      if (projects.length > 0 && !selectedProjectId) {
-        selectedProjectId = projects[0].id;
+
+      if (pRes.status === 'fulfilled') {
+        projects = pRes.value || [];
+        if (projects.length > 0 && !selectedProjectId) {
+          selectedProjectId = projects[0].id;
+        }
       }
-    } catch (err: any) {
-      error = err.message || 'Failed to load Minecraft servers';
+
+      if (sRes.status === 'fulfilled') {
+        servers = sRes.value || [];
+      } else {
+        error = sRes.reason?.message || 'Failed to load Minecraft servers';
+      }
     } finally {
       loading = false;
     }
