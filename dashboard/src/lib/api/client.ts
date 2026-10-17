@@ -221,7 +221,7 @@ export interface MinecraftServer {
   user_id: string;
   name: string;
   slug: string;
-  server_type: 'PAPER' | 'VANILLA' | 'FABRIC' | 'FORGE' | 'PURPUR' | 'SPIGOT' | 'BEDROCK';
+  server_type: 'PAPER' | 'VANILLA' | 'FABRIC' | 'FORGE' | 'NEOFORGE' | 'PURPUR' | 'SPIGOT' | 'BEDROCK';
   version: string;
   status: 'creating' | 'running' | 'stopped' | 'failed';
   container_id?: string;

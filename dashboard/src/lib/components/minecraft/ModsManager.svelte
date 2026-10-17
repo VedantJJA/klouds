@@ -73,6 +73,10 @@
       searchType = 'mod';
       selectedLoader = 'forge';
       activeInstalledDir = 'mods';
+    } else if (['NEOFORGE'].includes(st)) {
+      searchType = 'mod';
+      selectedLoader = 'neoforge';
+      activeInstalledDir = 'mods';
     } else if (['PURPUR', 'PAPER', 'SPIGOT'].includes(st)) {
       searchType = 'plugin';
       selectedLoader = st.toLowerCase();

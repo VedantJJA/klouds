@@ -7,7 +7,7 @@ CREATE TABLE IF NOT EXISTS minecraft_servers (
     user_id           TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     name              TEXT NOT NULL,
     slug              TEXT NOT NULL UNIQUE,
-    server_type       TEXT NOT NULL DEFAULT 'PAPER' CHECK (server_type IN ('PAPER', 'VANILLA', 'FABRIC', 'FORGE', 'PURPUR', 'SPIGOT', 'BEDROCK')),
+    server_type       TEXT NOT NULL DEFAULT 'PAPER' CHECK (server_type IN ('PAPER', 'VANILLA', 'FABRIC', 'FORGE', 'NEOFORGE', 'PURPUR', 'SPIGOT', 'BEDROCK')),
     version           TEXT NOT NULL DEFAULT '1.21.4',
     status            TEXT NOT NULL DEFAULT 'stopped' CHECK (status IN ('creating', 'running', 'stopped', 'failed')),
     container_id      TEXT,

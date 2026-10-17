@@ -47,7 +47,7 @@ func NewMinecraftHandler(pool *pgxpool.Pool, containers *container.Manager, enc 
 type CreateMinecraftServerRequest struct {
 	ProjectID        string `json:"project_id"`
 	Name             string `json:"name"`
-	ServerType       string `json:"server_type"` // PAPER, VANILLA, FABRIC, FORGE, PURPUR, SPIGOT, BEDROCK
+	ServerType       string `json:"server_type"` // PAPER, VANILLA, FABRIC, FORGE, NEOFORGE, PURPUR, SPIGOT, BEDROCK
 	Version          string `json:"version"`     // 1.21.4, LATEST, etc.
 	ServerPort       int32  `json:"server_port"` // Optional, 0 for auto-assign
 	MOTD             string `json:"motd"`
@@ -135,7 +135,7 @@ func (h *MinecraftHandler) Create(w http.ResponseWriter, r *http.Request) {
 	// Defaults & normalization
 	serverType := strings.ToUpper(strings.TrimSpace(req.ServerType))
 	switch serverType {
-	case "PAPER", "PURPUR", "SPIGOT", "VANILLA", "FABRIC", "FORGE", "BEDROCK":
+	case "PAPER", "PURPUR", "SPIGOT", "VANILLA", "FABRIC", "FORGE", "NEOFORGE", "BEDROCK":
 		// valid
 	default:
 		serverType = "PAPER"

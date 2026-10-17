@@ -36,7 +36,7 @@
   let showModal = $state(false);
   let selectedProjectId = $state('');
   let name = $state('');
-  let serverType = $state<'PAPER' | 'VANILLA' | 'FABRIC' | 'FORGE' | 'PURPUR' | 'SPIGOT' | 'BEDROCK'>('PAPER');
+  let serverType = $state<'PAPER' | 'VANILLA' | 'FABRIC' | 'FORGE' | 'NEOFORGE' | 'PURPUR' | 'SPIGOT' | 'BEDROCK'>('PAPER');
   let version = $state('1.21.4');
   let memoryLimitGb = $state(2);
   let serverPort = $state<number | undefined>(undefined);
@@ -543,6 +543,12 @@
                 <input type="radio" name="stype" value="FORGE" bind:group={serverType} />
                 <div class="software-name">Forge</div>
                 <div class="software-desc">Heavy modpack ecosystem and classic modded servers</div>
+              </label>
+
+              <label class="software-card" class:selected={serverType === 'NEOFORGE'}>
+                <input type="radio" name="stype" value="NEOFORGE" bind:group={serverType} />
+                <div class="software-name">NeoForge</div>
+                <div class="software-desc">Modern Forge fork for next-gen 1.20.2+ modded servers</div>
               </label>
 
               <label class="software-card" class:selected={serverType === 'BEDROCK'}>

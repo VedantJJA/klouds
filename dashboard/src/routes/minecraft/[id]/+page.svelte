@@ -699,6 +699,7 @@
               <option value="PURPUR">Purpur (High-Performance Paper Fork)</option>
               <option value="FABRIC">Fabric (Modern Modding)</option>
               <option value="FORGE">Forge (Classic Modding)</option>
+              <option value="NEOFORGE">NeoForge (Modern Forge Fork)</option>
               <option value="SPIGOT">Spigot (Standard Plugins)</option>
               <option value="VANILLA">Vanilla (Official Mojang)</option>
               <option value="BEDROCK">Bedrock (iOS, Android, Xbox, Win10)</option>
