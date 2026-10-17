@@ -88,6 +88,7 @@ type UserQuota struct {
 	BuildTimeoutSecs   int32  `json:"build_timeout_secs"`
 	MaxDeploysPerDay   int32  `json:"max_deploys_per_day"`
 	MaxCustomDomains   int32  `json:"max_custom_domains"`
+	MaxMinecraftServers int32  `json:"max_minecraft_servers"`
 }
 
 type Project struct {
@@ -213,5 +214,33 @@ type UserOAuthAccount struct {
 	Scopes                 []string   `json:"scopes"`
 	CreatedAt              time.Time  `json:"created_at"`
 	UpdatedAt              time.Time  `json:"updated_at"`
+}
+
+type MinecraftServer struct {
+	ID                string    `json:"id"`
+	ProjectID         string    `json:"project_id"`
+	UserID            string    `json:"user_id"`
+	Name              string    `json:"name"`
+	Slug              string    `json:"slug"`
+	ServerType        string    `json:"server_type"` // PAPER, VANILLA, FABRIC, FORGE, PURPUR, SPIGOT, BEDROCK
+	Version           string    `json:"version"`
+	Status            string    `json:"status"` // creating, running, stopped, failed
+	ContainerID       *string   `json:"container_id"`
+	ServerPort        int32     `json:"server_port"`
+	RconPort          int32     `json:"rcon_port"`
+	RconPassword      string    `json:"-"`
+	MOTD              string    `json:"motd"`
+	Difficulty        string    `json:"difficulty"`
+	GameMode          string    `json:"game_mode"`
+	MaxPlayers        int32     `json:"max_players"`
+	PVP               bool      `json:"pvp"`
+	OnlineMode        bool      `json:"online_mode"`
+	WhitelistEnabled  bool      `json:"whitelist_enabled"`
+	CpuLimit          int32     `json:"cpu_limit"`
+	MemoryLimit       int64     `json:"memory_limit"`
+	DiskLimit         int64     `json:"disk_limit"`
+	Ops               string    `json:"ops"`
+	CreatedAt         time.Time `json:"created_at"`
+	UpdatedAt         time.Time `json:"updated_at"`
 }
 

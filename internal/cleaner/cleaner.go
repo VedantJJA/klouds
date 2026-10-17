@@ -44,15 +44,18 @@ func (c *Cleaner) PruneAll(ctx context.Context, minAge time.Duration) (PruneResu
 	activeServiceIDs := make(map[string]bool)
 	activeDatabaseIDs := make(map[string]bool)
 	activeDBHosts := make(map[string]bool)
+	activeMinecraftIDs := make(map[string]bool)
 	var activeSubdomains []string
 
 	// 1. Fetch active references from PostgreSQL
 	if c.pool != nil {
-		// Active container IDs from services and databases
+		// Active container IDs from services, databases, and minecraft servers
 		rows, err := c.pool.Query(ctx, `
 			SELECT container_id FROM services WHERE container_id IS NOT NULL AND container_id != ''
 			UNION
 			SELECT container_id FROM databases WHERE container_id IS NOT NULL AND container_id != ''
+			UNION
+			SELECT container_id FROM minecraft_servers WHERE container_id IS NOT NULL AND container_id != ''
 		`)
 		if err == nil {
 			for rows.Next() {
@@ -110,6 +113,23 @@ func (c *Cleaner) PruneAll(ctx context.Context, minAge time.Duration) (PruneResu
 		} else {
 			log.Warn().Err(err).Msg("Failed to query active database IDs for orphan prune")
 		}
+
+		// Active minecraft IDs & slugs
+		mcRows, err := c.pool.Query(ctx, `SELECT id, slug FROM minecraft_servers`)
+		if err == nil {
+			for mcRows.Next() {
+				var mcID, slug string
+				if err := mcRows.Scan(&mcID, &slug); err == nil {
+					if mcID != "" {
+						activeMinecraftIDs[mcID] = true
+					}
+					if slug != "" {
+						activeMinecraftIDs[slug] = true
+					}
+				}
+			}
+			mcRows.Close()
+		}
 	}
 
 	// 2. Prune unreferenced containers from Docker
@@ -119,6 +139,7 @@ func (c *Cleaner) PruneAll(ctx context.Context, minAge time.Duration) (PruneResu
 			ActiveServiceIDs:   activeServiceIDs,
 			ActiveDatabaseIDs:  activeDatabaseIDs,
 			ActiveDBHosts:      activeDBHosts,
+			ActiveMinecraftIDs: activeMinecraftIDs,
 		}
 		pruned, err := c.containers.PruneOrphanContainers(ctx, criteria, minAge)
 		if err != nil {

@@ -1,6 +1,6 @@
 <script lang="ts">
   import { onMount } from 'svelte';
-  import { api, type Project, type Service, type Database } from '$lib/api/client';
+  import { api, type Project, type Service, type Database, type MinecraftServer } from '$lib/api/client';
   import { currentUser, userQuota } from '$lib/stores/auth';
   import {
     FolderKanban,
@@ -10,12 +10,14 @@
     ArrowRight,
     ExternalLink,
     RefreshCw,
-    Activity
+    Activity,
+    Gamepad2
   } from '@lucide/svelte';
 
   let projects = $state<Project[]>([]);
   let services = $state<Service[]>([]);
   let databases = $state<Database[]>([]);
+  let minecraftServers = $state<MinecraftServer[]>([]);
   let loading = $state(true);
   let error = $state('');
 
@@ -23,14 +25,16 @@
     loading = true;
     error = '';
     try {
-      const [p, s, d] = await Promise.all([
+      const [p, s, d, m] = await Promise.all([
         api.listProjects(),
         api.listServices(),
-        api.listDatabases()
+        api.listDatabases(),
+        api.listMinecraftServers()
       ]);
       projects = p || [];
       services = s || [];
       databases = d || [];
+      minecraftServers = m || [];
     } catch (err: any) {
       error = err.message || 'Failed to load platform data';
     } finally {
@@ -110,6 +114,14 @@
         PostgreSQL, Redis, MongoDB
       {/if}
     </div>
+  </div>
+
+  <div class="metric-card">
+    <div class="metric-label">Minecraft Servers</div>
+    <div class="metric-value" style="color: var(--color-success);">
+      {minecraftServers.filter(m => m.status === 'running').length} / {minecraftServers.length}
+    </div>
+    <div class="metric-sub">Paper, Fabric, Vanilla</div>
   </div>
 </div>
 
@@ -241,6 +253,63 @@
       </div>
     {/if}
   </div>
+
+  <!-- Minecraft Quick Card -->
+  {#if minecraftServers.length > 0}
+    <div class="card mb-4">
+      <div class="card-header">
+        <div class="flex items-center gap-2">
+          <Gamepad2 size={18} style="color: var(--color-success);" />
+          <h3>Minecraft Worlds ({minecraftServers.length})</h3>
+        </div>
+        <a href="/minecraft" class="btn btn-secondary btn-sm">
+          <span>Manage Worlds</span>
+          <ArrowRight size={13} />
+        </a>
+      </div>
+
+      <div class="table-wrapper">
+        <table>
+          <thead>
+            <tr>
+              <th>Server</th>
+              <th>Engine</th>
+              <th>Status</th>
+              <th>Connection Port</th>
+              <th>Action</th>
+            </tr>
+          </thead>
+          <tbody>
+            {#each minecraftServers.slice(0, 5) as srv}
+              <tr>
+                <td>
+                  <a href={`/minecraft/${srv.id}`} class="service-name-link">
+                    {srv.name}
+                  </a>
+                </td>
+                <td>
+                  <span class="font-mono text-xs">{srv.server_type} v{srv.version}</span>
+                </td>
+                <td>
+                  <span class="badge" class:badge-running={srv.status === 'running'}>
+                    {srv.status === 'running' ? 'Online' : 'Stopped'}
+                  </span>
+                </td>
+                <td>
+                  <span class="font-mono text-xs text-success">:{srv.server_port}</span>
+                </td>
+                <td>
+                  <a href={`/minecraft/${srv.id}`} class="btn btn-secondary btn-sm">
+                    Dashboard
+                  </a>
+                </td>
+              </tr>
+            {/each}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  {/if}
 </div>
 
 <style>

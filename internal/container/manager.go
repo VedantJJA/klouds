@@ -5,6 +5,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"net/netip"
 	"strings"
 	"time"
 
@@ -256,6 +257,234 @@ func (m *Manager) CreateDatabaseContainer(ctx context.Context, cfg DatabaseConfi
 	return resp.ID, nil
 }
 
+// MinecraftConfig holds configuration for creating a Minecraft game server container.
+type MinecraftConfig struct {
+	Name         string            // Container name (e.g., "klouds-mc-myserver")
+	ServerType   string            // PAPER, VANILLA, FABRIC, FORGE, PURPUR, SPIGOT, BEDROCK
+	Version      string            // e.g., "1.21.4"
+	ServerPort   int               // Host port (e.g., 25565)
+	RconPort     int               // Internal Rcon port (default 25575)
+	RconPassword string
+	MOTD         string
+	Difficulty   string
+	GameMode     string
+	MaxPlayers   int
+	PVP          bool
+	OnlineMode   bool
+	Whitelist    bool
+	Ops          string
+	CPULimit     int64
+	MemoryLimit  int64
+	DataVolume   string
+	NetworkAlias string
+	Labels       map[string]string
+}
+
+// CreateMinecraftContainer creates and starts a Minecraft server container.
+func (m *Manager) CreateMinecraftContainer(ctx context.Context, cfg MinecraftConfig) (string, error) {
+	serverType := strings.ToUpper(strings.TrimSpace(cfg.ServerType))
+	if serverType == "" {
+		serverType = "PAPER"
+	}
+
+	image := "itzg/minecraft-server:latest"
+	isBedrock := serverType == "BEDROCK"
+	if isBedrock {
+		image = "itzg/minecraft-bedrock-server:latest"
+	}
+
+	if err := m.pullImage(ctx, image); err != nil {
+		return "", fmt.Errorf("pull image %s: %w", image, err)
+	}
+
+	memBytes := cfg.MemoryLimit
+	if memBytes <= 0 {
+		memBytes = 2 * 1024 * 1024 * 1024
+	}
+	memG := memBytes / (1024 * 1024 * 1024)
+	var memStr string
+	if memG > 0 && memBytes%(1024*1024*1024) == 0 {
+		memStr = fmt.Sprintf("%dG", memG)
+	} else {
+		memStr = fmt.Sprintf("%dM", memBytes/(1024*1024))
+	}
+
+	ver := cfg.Version
+	if ver == "" {
+		ver = "LATEST"
+	}
+
+	motd := cfg.MOTD
+	if motd == "" {
+		motd = "A Minecraft Server hosted on Klouds"
+	}
+
+	diff := cfg.Difficulty
+	if diff == "" {
+		diff = "normal"
+	}
+
+	mode := cfg.GameMode
+	if mode == "" {
+		mode = "survival"
+	}
+
+	maxPlayers := cfg.MaxPlayers
+	if maxPlayers <= 0 {
+		maxPlayers = 20
+	}
+
+	rconPort := cfg.RconPort
+	if rconPort <= 0 {
+		rconPort = 25575
+	}
+
+	env := []string{
+		"EULA=TRUE",
+		"ENABLE_AUTOPAUSE=false",
+	}
+
+	if isBedrock {
+		env = append(env,
+			fmt.Sprintf("SERVER_NAME=%s", motd),
+			fmt.Sprintf("GAMEMODE=%s", mode),
+			fmt.Sprintf("DIFFICULTY=%s", diff),
+			fmt.Sprintf("MAX_PLAYERS=%d", maxPlayers),
+			fmt.Sprintf("ONLINE_MODE=%t", cfg.OnlineMode),
+			"SERVER_PORT=19132",
+		)
+	} else {
+		env = append(env,
+			fmt.Sprintf("TYPE=%s", serverType),
+			fmt.Sprintf("VERSION=%s", ver),
+			fmt.Sprintf("MEMORY=%s", memStr),
+			fmt.Sprintf("MOTD=%s", motd),
+			fmt.Sprintf("DIFFICULTY=%s", diff),
+			fmt.Sprintf("MODE=%s", mode),
+			fmt.Sprintf("MAX_PLAYERS=%d", maxPlayers),
+			fmt.Sprintf("PVP=%t", cfg.PVP),
+			fmt.Sprintf("ONLINE_MODE=%t", cfg.OnlineMode),
+			fmt.Sprintf("ENABLE_WHITELIST=%t", cfg.Whitelist),
+			"ENABLE_RCON=true",
+			fmt.Sprintf("RCON_PASSWORD=%s", cfg.RconPassword),
+			fmt.Sprintf("RCON_PORT=%d", rconPort),
+		)
+		if cfg.Ops != "" {
+			env = append(env, fmt.Sprintf("OPS=%s", cfg.Ops))
+		}
+	}
+
+	labels := map[string]string{
+		"managed-by":     "klouds",
+		"klouds.type":    "minecraft",
+		"klouds.mc.type": serverType,
+	}
+	for k, v := range cfg.Labels {
+		labels[k] = v
+	}
+
+	exposedPorts := make(mobynetwork.PortSet)
+	internalGamePort := 25565
+	if isBedrock {
+		internalGamePort = 19132
+	}
+	gamePort := mobynetwork.MustParsePort(fmt.Sprintf("%d/tcp", internalGamePort))
+	exposedPorts[gamePort] = struct{}{}
+	if isBedrock {
+		exposedPorts[mobynetwork.MustParsePort("19132/udp")] = struct{}{}
+	}
+	if !isBedrock {
+		rconP := mobynetwork.MustParsePort(fmt.Sprintf("%d/tcp", rconPort))
+		exposedPorts[rconP] = struct{}{}
+	}
+
+	containerConfig := &mobycontainer.Config{
+		Image:        image,
+		Env:          env,
+		Labels:       labels,
+		ExposedPorts: exposedPorts,
+		AttachStdin:  true,
+		OpenStdin:    true,
+		Tty:          true,
+	}
+
+	hostPort := cfg.ServerPort
+	if hostPort <= 0 {
+		hostPort = 25565
+	}
+
+	portBindings := mobynetwork.PortMap{
+		gamePort: []mobynetwork.PortBinding{
+			{
+				HostIP:   netip.IPv4Unspecified(),
+				HostPort: fmt.Sprintf("%d", hostPort),
+			},
+		},
+	}
+	if isBedrock {
+		portBindings[mobynetwork.MustParsePort("19132/udp")] = []mobynetwork.PortBinding{
+			{
+				HostIP:   netip.IPv4Unspecified(),
+				HostPort: fmt.Sprintf("%d", hostPort),
+			},
+		}
+	}
+
+	cpuLimit := cfg.CPULimit
+	if cpuLimit <= 0 {
+		cpuLimit = 1000
+	}
+
+	hostConfig := &mobycontainer.HostConfig{
+		Resources: mobycontainer.Resources{
+			NanoCPUs: cpuLimit * 1_000_000,
+			Memory:   memBytes,
+		},
+		PortBindings: portBindings,
+		RestartPolicy: mobycontainer.RestartPolicy{
+			Name: mobycontainer.RestartPolicyUnlessStopped,
+		},
+		SecurityOpt: []string{"no-new-privileges"},
+	}
+
+	if cfg.DataVolume != "" {
+		hostConfig.Binds = []string{
+			fmt.Sprintf("%s:/data:rw", cfg.DataVolume),
+		}
+	}
+
+	networkConfig := &mobynetwork.NetworkingConfig{
+		EndpointsConfig: map[string]*mobynetwork.EndpointSettings{
+			m.networkName: {
+				Aliases: []string{cfg.NetworkAlias},
+			},
+		},
+	}
+
+	resp, err := m.client.ContainerCreate(ctx, mobyclient.ContainerCreateOptions{
+		Config:           containerConfig,
+		HostConfig:       hostConfig,
+		NetworkingConfig: networkConfig,
+		Name:             cfg.Name,
+	})
+	if err != nil {
+		return "", fmt.Errorf("create minecraft container: %w", err)
+	}
+
+	if _, err := m.client.ContainerStart(ctx, resp.ID, mobyclient.ContainerStartOptions{}); err != nil {
+		return "", fmt.Errorf("start minecraft container: %w", err)
+	}
+
+	log.Info().
+		Str("container_id", resp.ID[:12]).
+		Str("type", serverType).
+		Int("port", hostPort).
+		Str("name", cfg.Name).
+		Msg("Minecraft server container started")
+
+	return resp.ID, nil
+}
+
 // StopContainer stops a running container gracefully.
 func (m *Manager) StopContainer(ctx context.Context, containerID string) error {
 	timeout := 30 // seconds
@@ -281,6 +510,7 @@ type OrphanCriteria struct {
 	ActiveServiceIDs   map[string]bool
 	ActiveDatabaseIDs  map[string]bool
 	ActiveDBHosts      map[string]bool
+	ActiveMinecraftIDs map[string]bool
 }
 
 var protectedContainerNames = map[string]bool{
@@ -324,7 +554,7 @@ func (m *Manager) PruneOrphanContainers(ctx context.Context, criteria OrphanCrit
 		if val, ok := c.Labels["managed-by"]; ok && val == "klouds" {
 			isManaged = true
 		}
-		if strings.HasPrefix(name, "klouds-svc-") || strings.HasPrefix(name, "klouds-db-") {
+		if strings.HasPrefix(name, "klouds-svc-") || strings.HasPrefix(name, "klouds-db-") || strings.HasPrefix(name, "klouds-mc-") {
 			isManaged = true
 		}
 		if !isManaged {
@@ -367,6 +597,19 @@ func (m *Manager) PruneOrphanContainers(ctx context.Context, criteria OrphanCrit
 		if strings.HasPrefix(name, "klouds-db-") {
 			dbHost := strings.TrimPrefix(name, "klouds-db-")
 			if criteria.ActiveDBHosts[dbHost] {
+				continue
+			}
+		}
+
+		// 9. Check if referenced by active minecraft ID or slug
+		if mcID, ok := c.Labels["klouds.minecraft.id"]; ok && mcID != "" {
+			if criteria.ActiveMinecraftIDs != nil && criteria.ActiveMinecraftIDs[mcID] {
+				continue
+			}
+		}
+		if strings.HasPrefix(name, "klouds-mc-") {
+			mcSlug := strings.TrimPrefix(name, "klouds-mc-")
+			if criteria.ActiveMinecraftIDs != nil && criteria.ActiveMinecraftIDs[mcSlug] {
 				continue
 			}
 		}
@@ -421,6 +664,28 @@ func (m *Manager) ContainerLogsFollow(ctx context.Context, containerID string) (
 		Tail:       "100",
 		Timestamps: true,
 	})
+}
+
+// ExecCommand runs a command inside an active container and returns its output.
+func (m *Manager) ExecCommand(ctx context.Context, containerID string, cmd []string) (string, error) {
+	execCreate, err := m.client.ExecCreate(ctx, containerID, mobyclient.ExecCreateOptions{
+		Cmd:          cmd,
+		AttachStdout: true,
+		AttachStderr: true,
+	})
+	if err != nil {
+		return "", fmt.Errorf("exec create: %w", err)
+	}
+
+	attachRes, err := m.client.ExecAttach(ctx, execCreate.ID, mobyclient.ExecAttachOptions{})
+	if err != nil {
+		return "", fmt.Errorf("exec attach: %w", err)
+	}
+	defer attachRes.Close()
+
+	buf := new(strings.Builder)
+	_, _ = io.Copy(buf, attachRes.Reader)
+	return strings.TrimSpace(buf.String()), nil
 }
 
 // HealthCheck checks if a container is running and has been up for a bit.

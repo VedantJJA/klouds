@@ -24,7 +24,8 @@ export interface Project {
   id: string;
   user_id: string;
   name: string;
-  description: string;
+  slug?: string;
+  description?: string;
   created_at: string;
   updated_at: string;
 }
@@ -212,6 +213,60 @@ export interface SystemMetrics {
   uptime_seconds: number;
   load_avg: [number, number, number];
   timestamp: string;
+}
+
+export interface MinecraftServer {
+  id: string;
+  project_id: string;
+  user_id: string;
+  name: string;
+  slug: string;
+  server_type: 'PAPER' | 'VANILLA' | 'FABRIC' | 'FORGE' | 'PURPUR' | 'SPIGOT' | 'BEDROCK';
+  version: string;
+  status: 'creating' | 'running' | 'stopped' | 'failed';
+  container_id?: string;
+  server_port: number;
+  rcon_port: number;
+  motd: string;
+  difficulty: 'peaceful' | 'easy' | 'normal' | 'hard';
+  game_mode: 'survival' | 'creative' | 'adventure' | 'spectator';
+  max_players: number;
+  pvp: boolean;
+  online_mode: boolean;
+  whitelist_enabled: boolean;
+  cpu_limit: number;
+  memory_limit: number;
+  disk_limit: number;
+  ops: string;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface CreateMinecraftServerData {
+  project_id: string;
+  name: string;
+  server_type?: string;
+  version?: string;
+  server_port?: number;
+  motd?: string;
+  difficulty?: string;
+  game_mode?: string;
+  max_players?: number;
+  pvp?: boolean;
+  online_mode?: boolean;
+  whitelist_enabled?: boolean;
+  memory_limit?: number;
+  cpu_limit?: number;
+  ops?: string;
+}
+
+export interface MinecraftPlayersResponse {
+  server_id: string;
+  current_players: number;
+  max_players: number;
+  online_players: string[];
+  ops: string[];
+  whitelist_enabled: boolean;
 }
 
 const TOKEN_KEY = 'klouds_auth_token';
@@ -592,6 +647,80 @@ class ApiClient {
       method: 'POST',
       body: JSON.stringify(req)
     });
+  }
+
+  // Minecraft Servers
+  async listMinecraftServers(projectId?: string): Promise<MinecraftServer[]> {
+    const query = projectId ? `?project_id=${encodeURIComponent(projectId)}` : '';
+    return this.request(`/api/minecraft${query}`);
+  }
+
+  async getMinecraftServer(id: string): Promise<MinecraftServer> {
+    return this.request(`/api/minecraft/${id}`);
+  }
+
+  async createMinecraftServer(data: CreateMinecraftServerData): Promise<MinecraftServer> {
+    return this.request('/api/minecraft', {
+      method: 'POST',
+      body: JSON.stringify(data)
+    });
+  }
+
+  async updateMinecraftServer(id: string, data: Partial<CreateMinecraftServerData>): Promise<MinecraftServer> {
+    return this.request(`/api/minecraft/${id}`, {
+      method: 'PUT',
+      body: JSON.stringify(data)
+    });
+  }
+
+  async startMinecraftServer(id: string): Promise<{ status: string }> {
+    return this.request(`/api/minecraft/${id}/start`, {
+      method: 'POST'
+    });
+  }
+
+  async stopMinecraftServer(id: string): Promise<{ status: string }> {
+    return this.request(`/api/minecraft/${id}/stop`, {
+      method: 'POST'
+    });
+  }
+
+  async restartMinecraftServer(id: string): Promise<{ status: string }> {
+    return this.request(`/api/minecraft/${id}/restart`, {
+      method: 'POST'
+    });
+  }
+
+  async deleteMinecraftServer(id: string): Promise<{ status: string }> {
+    return this.request(`/api/minecraft/${id}`, {
+      method: 'DELETE'
+    });
+  }
+
+  async getMinecraftLogs(id: string, tail = '250'): Promise<{ logs: string }> {
+    return this.request(`/api/minecraft/${id}/logs?tail=${tail}`);
+  }
+
+  async sendMinecraftCommand(id: string, command: string): Promise<{ command: string; response: string; error?: string }> {
+    return this.request(`/api/minecraft/${id}/command`, {
+      method: 'POST',
+      body: JSON.stringify({ command })
+    });
+  }
+
+  async getMinecraftProperties(id: string): Promise<{ content: string }> {
+    return this.request(`/api/minecraft/${id}/properties`);
+  }
+
+  async updateMinecraftProperties(id: string, content: string): Promise<{ status: string }> {
+    return this.request(`/api/minecraft/${id}/properties`, {
+      method: 'PUT',
+      body: JSON.stringify({ content })
+    });
+  }
+
+  async getMinecraftPlayers(id: string): Promise<MinecraftPlayersResponse> {
+    return this.request(`/api/minecraft/${id}/players`);
   }
 }
 

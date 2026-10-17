@@ -15,7 +15,8 @@
     Moon,
     X,
     Key,
-    GitBranch
+    GitBranch,
+    Gamepad2
   } from '@lucide/svelte';
 
   const pathname = $derived($page.url.pathname);
@@ -73,6 +74,18 @@
         <Database size={18} />
       </span>
       <span>Databases</span>
+    </a>
+
+    <a
+      href="/minecraft"
+      class="nav-item"
+      class:active={isLinkActive('/minecraft')}
+      onclick={closeMobileNav}
+    >
+      <span class="nav-item-icon">
+        <Gamepad2 size={18} />
+      </span>
+      <span>Minecraft</span>
     </a>
 
     <a

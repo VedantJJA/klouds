@@ -74,6 +74,7 @@ func NewRouter(cfg RouterConfig) *chi.Mux {
 	webhookHandler := webhook.NewHandler(cfg.Pool, cfg.Engine, cfg.Deployer)
 	blueprintHandler := NewBlueprintHandler(cfg.Pool, cfg.DataDir, cfg.Encryptor, cfg.Containers, cfg.Engine, cfg.Deployer, cfg.Domain)
 	oauthHandler := NewOAuthHandler(cfg.Pool, cfg.TokenSvc, cfg.Encryptor, cfg.SecretKey, cfg.BaseURL)
+	minecraftHandler := NewMinecraftHandler(cfg.Pool, cfg.Containers, cfg.Encryptor, cfg.Domain, cfg.DataDir, cln)
 
 	r.Route("/api", func(r chi.Router) {
 		// --- Public routes (no auth) ---
@@ -161,6 +162,21 @@ func NewRouter(cfg RouterConfig) *chi.Mux {
 			r.Get("/databases/{databaseID}", dbHandler.Get)
 			r.Get("/databases/{databaseID}/connection", dbHandler.ConnectionInfo)
 			r.Delete("/databases/{databaseID}", dbHandler.Delete)
+
+			// Minecraft Servers
+			r.Post("/minecraft", minecraftHandler.Create)
+			r.Get("/minecraft", minecraftHandler.List)
+			r.Get("/minecraft/{id}", minecraftHandler.Get)
+			r.Put("/minecraft/{id}", minecraftHandler.Update)
+			r.Post("/minecraft/{id}/start", minecraftHandler.Start)
+			r.Post("/minecraft/{id}/stop", minecraftHandler.Stop)
+			r.Post("/minecraft/{id}/restart", minecraftHandler.Restart)
+			r.Delete("/minecraft/{id}", minecraftHandler.Delete)
+			r.Get("/minecraft/{id}/logs", minecraftHandler.Logs)
+			r.Post("/minecraft/{id}/command", minecraftHandler.Command)
+			r.Get("/minecraft/{id}/properties", minecraftHandler.Properties)
+			r.Put("/minecraft/{id}/properties", minecraftHandler.UpdateProperties)
+			r.Get("/minecraft/{id}/players", minecraftHandler.Players)
 
 			// User Git & OAuth Accounts
 			r.Get("/user/oauth", oauthHandler.GetUserOAuthAccounts)
