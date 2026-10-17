@@ -342,6 +342,7 @@ func (m *Manager) CreateMinecraftContainer(ctx context.Context, cfg MinecraftCon
 	env := []string{
 		"EULA=TRUE",
 		"ENABLE_AUTOPAUSE=false",
+		"PAUSE_WHEN_EMPTY_SECONDS=-1",
 	}
 
 	if isBedrock {
