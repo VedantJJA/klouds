@@ -85,7 +85,10 @@
       services = s || [];
       databases = d || [];
       minecraftServers = m || [];
-      if (p?.description?.toLowerCase().includes('minecraft') && (s || []).length === 0) {
+      const tabParam = $page.url.searchParams.get('tab');
+      if (tabParam === 'minecraft' || tabParam === 'services' || tabParam === 'databases' || tabParam === 'settings') {
+        activeTab = tabParam;
+      } else if (p?.description?.toLowerCase().includes('minecraft') && (s || []).length === 0) {
         activeTab = 'minecraft';
       }
     } catch (err: any) {

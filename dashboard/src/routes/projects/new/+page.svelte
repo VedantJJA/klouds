@@ -25,7 +25,11 @@
         name: projectName.trim(),
         description: projectDesc.trim() || `Environment: ${environment}`
       });
-      goto(`/projects/${created.id}`);
+      if (environment === 'minecraft') {
+        goto(`/projects/${created.id}?tab=minecraft`);
+      } else {
+        goto(`/projects/${created.id}`);
+      }
     } catch (err: any) {
       createError = err.message || 'Failed to create project';
       creating = false;
