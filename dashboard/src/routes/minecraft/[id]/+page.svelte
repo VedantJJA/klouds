@@ -8,6 +8,8 @@
     type MinecraftPlayersResponse
   } from '$lib/api/client';
   import Breadcrumbs from '$lib/components/common/Breadcrumbs.svelte';
+  import FileManager from '$lib/components/minecraft/FileManager.svelte';
+  import ModsManager from '$lib/components/minecraft/ModsManager.svelte';
   import {
     Gamepad2,
     Play,
@@ -30,7 +32,9 @@
     UserPlus,
     UserMinus,
     Lock,
-    Save
+    Save,
+    Folder,
+    Puzzle
   } from '@lucide/svelte';
 
   const serverId = $derived($page.params.id || '');
@@ -41,7 +45,15 @@
   let error = $state('');
 
   // Active Tab
-  let activeTab = $state<'console' | 'settings' | 'players' | 'properties'>('console');
+  let activeTab = $state<'console' | 'files' | 'mods' | 'players' | 'properties' | 'settings'>('console');
+
+  // Dynamic Minecraft versions
+  let availableVersions = $state<string[]>([
+    '1.21.4', '1.21.3', '1.21.2', '1.21.1', '1.21',
+    '1.20.6', '1.20.4', '1.20.2', '1.20.1', '1.20',
+    '1.19.4', '1.18.2', '1.16.5', '1.12.2', '1.8.8'
+  ]);
+  let latestVersion = $state<string>('1.21.4');
 
   // Connection IP copy feedback
   let copiedAddress = $state(false);
@@ -107,10 +119,23 @@
   async function loadServerData() {
     if (!serverId) return;
     try {
-      const s = await api.getMinecraftServer(serverId);
-      server = s;
-      if (!settingsDirty) {
-        populateSettings(s);
+      const [sRes, vRes] = await Promise.allSettled([
+        api.getMinecraftServer(serverId),
+        api.getMinecraftVersions()
+      ]);
+
+      if (sRes.status === 'fulfilled') {
+        server = sRes.value;
+        if (!settingsDirty) {
+          populateSettings(sRes.value);
+        }
+      } else {
+        throw sRes.reason;
+      }
+
+      if (vRes.status === 'fulfilled' && vRes.value?.versions?.length > 0) {
+        availableVersions = vRes.value.versions;
+        latestVersion = vRes.value.latest;
       }
     } catch (err: any) {
       error = err.message || 'Failed to load Minecraft server';
@@ -520,11 +545,20 @@
 
     <button
       class="tab-btn"
-      class:active={activeTab === 'settings'}
-      onclick={() => activeTab = 'settings'}
+      class:active={activeTab === 'files'}
+      onclick={() => activeTab = 'files'}
     >
-      <Settings size={14} />
-      <span>Server Configuration</span>
+      <Folder size={14} />
+      <span>File Manager</span>
+    </button>
+
+    <button
+      class="tab-btn"
+      class:active={activeTab === 'mods'}
+      onclick={() => activeTab = 'mods'}
+    >
+      <Puzzle size={14} />
+      <span>Mods & Plugins</span>
     </button>
 
     <button
@@ -543,6 +577,15 @@
     >
       <FileText size={14} />
       <span>server.properties</span>
+    </button>
+
+    <button
+      class="tab-btn"
+      class:active={activeTab === 'settings'}
+      onclick={() => activeTab = 'settings'}
+    >
+      <Settings size={14} />
+      <span>Settings</span>
     </button>
   </div>
 
@@ -615,7 +658,19 @@
       </div>
     </div>
 
-  <!-- Tab 2: Settings Configuration -->
+  <!-- Tab 2: File Manager -->
+  {:else if activeTab === 'files'}
+    {#if server}
+      <FileManager serverId={server.id} />
+    {/if}
+
+  <!-- Tab 3: Mods & Plugins Manager -->
+  {:else if activeTab === 'mods'}
+    {#if server}
+      <ModsManager {server} onRestartRequested={handleRestart} />
+    {/if}
+
+  <!-- Tab 4: Settings Configuration -->
   {:else if activeTab === 'settings'}
     {#if settingsSuccess}
       <div class="alert alert-success mb-4 flex items-center justify-between">
@@ -631,6 +686,40 @@
     {/if}
 
     <div class="settings-grid">
+      <!-- Software & Engine Card -->
+      <div class="card">
+        <div class="card-header">
+          <h3>Server Software & Version</h3>
+        </div>
+        <div class="card-body space-y-4">
+          <div class="form-group">
+            <label class="form-label" for="st-software">Server Software / Loader</label>
+            <select id="st-software" class="form-input" bind:value={settingsType} onchange={() => settingsDirty = true}>
+              <option value="PAPER">Paper (Optimized & Plugin Support)</option>
+              <option value="PURPUR">Purpur (High-Performance Paper Fork)</option>
+              <option value="FABRIC">Fabric (Modern Modding)</option>
+              <option value="FORGE">Forge (Classic Modding)</option>
+              <option value="SPIGOT">Spigot (Standard Plugins)</option>
+              <option value="VANILLA">Vanilla (Official Mojang)</option>
+              <option value="BEDROCK">Bedrock (iOS, Android, Xbox, Win10)</option>
+            </select>
+            <span class="text-xs text-muted">Changing software switches the server container runtime on next restart.</span>
+          </div>
+
+          <div class="form-group">
+            <label class="form-label" for="st-ver">Minecraft Version</label>
+            <select id="st-ver" class="form-input" bind:value={settingsVersion} onchange={() => settingsDirty = true}>
+              <option value={latestVersion}>{latestVersion} (Latest Release)</option>
+              <option value="LATEST">Always Auto-Update to Latest</option>
+              {#each availableVersions.filter(v => v !== latestVersion) as v}
+                <option value={v}>{v}</option>
+              {/each}
+            </select>
+            <span class="text-xs text-muted">Dynamically fetched from Mojang upstream release manifest.</span>
+          </div>
+        </div>
+      </div>
+
       <!-- Gameplay Mechanics Card -->
       <div class="card">
         <div class="card-header">

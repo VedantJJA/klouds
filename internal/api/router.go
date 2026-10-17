@@ -164,6 +164,9 @@ func NewRouter(cfg RouterConfig) *chi.Mux {
 			r.Delete("/databases/{databaseID}", dbHandler.Delete)
 
 			// Minecraft Servers
+			r.Get("/minecraft/versions", minecraftHandler.GetVersions)
+			r.Get("/minecraft/modrinth/search", minecraftHandler.SearchModrinth)
+			r.Get("/minecraft/modrinth/versions", minecraftHandler.GetModrinthVersions)
 			r.Post("/minecraft", minecraftHandler.Create)
 			r.Get("/minecraft", minecraftHandler.List)
 			r.Get("/minecraft/{id}", minecraftHandler.Get)
@@ -177,6 +180,21 @@ func NewRouter(cfg RouterConfig) *chi.Mux {
 			r.Get("/minecraft/{id}/properties", minecraftHandler.Properties)
 			r.Put("/minecraft/{id}/properties", minecraftHandler.UpdateProperties)
 			r.Get("/minecraft/{id}/players", minecraftHandler.Players)
+
+			// Minecraft File Manager
+			r.Get("/minecraft/{id}/files", minecraftHandler.ListFiles)
+			r.Get("/minecraft/{id}/files/content", minecraftHandler.GetFileContent)
+			r.Put("/minecraft/{id}/files/content", minecraftHandler.SaveFileContent)
+			r.Post("/minecraft/{id}/files/upload", minecraftHandler.UploadFiles)
+			r.Post("/minecraft/{id}/files/folder", minecraftHandler.CreateFolder)
+			r.Post("/minecraft/{id}/files/delete", minecraftHandler.DeleteFile)
+			r.Get("/minecraft/{id}/files/download", minecraftHandler.DownloadFile)
+
+			// Minecraft Mods & Plugins
+			r.Get("/minecraft/{id}/mods", minecraftHandler.ListMods)
+			r.Post("/minecraft/{id}/mods/install", minecraftHandler.InstallMod)
+			r.Post("/minecraft/{id}/mods/toggle", minecraftHandler.ToggleMod)
+			r.Delete("/minecraft/{id}/mods", minecraftHandler.DeleteMod)
 
 			// User Git & OAuth Accounts
 			r.Get("/user/oauth", oauthHandler.GetUserOAuthAccounts)

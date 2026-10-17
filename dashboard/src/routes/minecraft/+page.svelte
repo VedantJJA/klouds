@@ -78,13 +78,22 @@
     Math.round(servers.reduce((acc, s) => acc + (s.memory_limit || 2147483648), 0) / (1024 * 1024 * 1024))
   );
 
+  // Dynamic versions
+  let availableVersions = $state<string[]>([
+    '1.21.4', '1.21.3', '1.21.2', '1.21.1', '1.21',
+    '1.20.6', '1.20.4', '1.20.2', '1.20.1', '1.20',
+    '1.19.4', '1.18.2', '1.16.5', '1.12.2', '1.8.8'
+  ]);
+  let latestVersion = $state<string>('1.21.4');
+
   async function loadData() {
     loading = true;
     error = '';
     try {
-      const [sRes, pRes] = await Promise.allSettled([
+      const [sRes, pRes, vRes] = await Promise.allSettled([
         api.listMinecraftServers(),
-        api.listProjects()
+        api.listProjects(),
+        api.getMinecraftVersions()
       ]);
 
       if (pRes.status === 'fulfilled') {
@@ -98,6 +107,14 @@
         servers = sRes.value || [];
       } else {
         error = sRes.reason?.message || 'Failed to load Minecraft servers';
+      }
+
+      if (vRes.status === 'fulfilled' && vRes.value?.versions?.length > 0) {
+        availableVersions = vRes.value.versions;
+        latestVersion = vRes.value.latest;
+        if (version === '1.21.4') {
+          version = vRes.value.latest;
+        }
       }
     } finally {
       loading = false;
@@ -541,14 +558,11 @@
             <div class="form-group">
               <label class="form-label" for="mc-version">Minecraft Version</label>
               <select id="mc-version" class="form-input" bind:value={version}>
-                <option value="1.21.4">1.21.4 (Latest)</option>
-                <option value="1.21.1">1.21.1</option>
-                <option value="1.20.4">1.20.4</option>
-                <option value="1.20.1">1.20.1</option>
-                <option value="1.19.4">1.19.4</option>
-                <option value="1.18.2">1.18.2</option>
-                <option value="1.16.5">1.16.5</option>
-                <option value="LATEST">Always Latest</option>
+                <option value={latestVersion}>{latestVersion} (Latest Release)</option>
+                <option value="LATEST">Always Auto-Update to Latest</option>
+                {#each availableVersions.filter(v => v !== latestVersion) as v}
+                  <option value={v}>{v}</option>
+                {/each}
               </select>
             </div>
 

@@ -269,6 +269,93 @@ export interface MinecraftPlayersResponse {
   whitelist_enabled: boolean;
 }
 
+export interface MinecraftFileItem {
+  name: string;
+  path: string;
+  is_dir: boolean;
+  size: number;
+  mod_time: string;
+  extension: string;
+  is_editable: boolean;
+}
+
+export interface MinecraftFileContentResponse {
+  name: string;
+  path: string;
+  content: string;
+  size: number;
+  mod_time: string;
+  extension: string;
+  is_editable: boolean;
+}
+
+export interface MinecraftInstalledModItem {
+  name: string;
+  filename: string;
+  size: number;
+  enabled: boolean;
+  dir: 'mods' | 'plugins';
+  mod_time: string;
+}
+
+export interface MinecraftInstalledModsResponse {
+  mods: MinecraftInstalledModItem[];
+  plugins: MinecraftInstalledModItem[];
+}
+
+export interface MinecraftVersionsResponse {
+  latest: string;
+  versions: string[];
+}
+
+export interface ModrinthSearchResultItem {
+  project_id: string;
+  project_type: 'mod' | 'plugin' | 'datapack' | 'modpack';
+  slug: string;
+  author: string;
+  title: string;
+  description: string;
+  categories: string[];
+  display_categories: string[];
+  versions: string[];
+  downloads: number;
+  follows: number;
+  icon_url?: string;
+  date_created: string;
+  date_modified: string;
+  latest_version?: string;
+  license?: string;
+  gallery?: string[];
+}
+
+export interface ModrinthSearchResponse {
+  hits: ModrinthSearchResultItem[];
+  offset: number;
+  limit: number;
+  total_hits: number;
+}
+
+export interface ModrinthVersionFile {
+  hashes: Record<string, string>;
+  url: string;
+  filename: string;
+  primary: boolean;
+  size: number;
+}
+
+export interface ModrinthVersionItem {
+  id: string;
+  project_id: string;
+  author_id: string;
+  name: string;
+  version_number: string;
+  game_versions: string[];
+  loaders: string[];
+  date_published: string;
+  downloads: number;
+  files: ModrinthVersionFile[];
+}
+
 const TOKEN_KEY = 'klouds_auth_token';
 
 export function getAuthToken(): string | null {
@@ -302,6 +389,9 @@ class ApiClient {
   private async request<T>(path: string, options: RequestInit = {}): Promise<T> {
     const url = path.startsWith('/') ? path : `/${path}`;
     const headers = { ...this.getHeaders(), ...options.headers };
+    if (typeof FormData !== 'undefined' && options.body instanceof FormData) {
+      delete (headers as Record<string, string>)['Content-Type'];
+    }
 
     let response: Response;
     try {
@@ -721,6 +811,100 @@ class ApiClient {
 
   async getMinecraftPlayers(id: string): Promise<MinecraftPlayersResponse> {
     return this.request(`/api/minecraft/${id}/players`);
+  }
+
+  // Minecraft Dynamic Versions
+  async getMinecraftVersions(type?: string): Promise<MinecraftVersionsResponse> {
+    const query = type ? `?type=${encodeURIComponent(type)}` : '';
+    return this.request(`/api/minecraft/versions${query}`);
+  }
+
+  // Minecraft File Manager
+  async listMinecraftFiles(id: string, path = ''): Promise<MinecraftFileItem[]> {
+    const query = path ? `?path=${encodeURIComponent(path)}` : '';
+    return this.request(`/api/minecraft/${id}/files${query}`);
+  }
+
+  async getMinecraftFileContent(id: string, path: string): Promise<MinecraftFileContentResponse> {
+    return this.request(`/api/minecraft/${id}/files/content?path=${encodeURIComponent(path)}`);
+  }
+
+  async saveMinecraftFileContent(id: string, path: string, content: string): Promise<{ status: string; path: string }> {
+    return this.request(`/api/minecraft/${id}/files/content`, {
+      method: 'PUT',
+      body: JSON.stringify({ path, content })
+    });
+  }
+
+  async createMinecraftFolder(id: string, path: string, name: string): Promise<{ status: string; path: string }> {
+    return this.request(`/api/minecraft/${id}/files/folder`, {
+      method: 'POST',
+      body: JSON.stringify({ path, name })
+    });
+  }
+
+  async deleteMinecraftFile(id: string, path: string): Promise<{ status: string }> {
+    return this.request(`/api/minecraft/${id}/files/delete`, {
+      method: 'POST',
+      body: JSON.stringify({ path })
+    });
+  }
+
+  async uploadMinecraftFiles(id: string, path: string, files: FileList | File[]): Promise<{ status: string; uploaded: string[]; count: number }> {
+    const formData = new FormData();
+    formData.append('path', path);
+    for (let i = 0; i < files.length; i++) {
+      formData.append('files', files[i]);
+    }
+    return this.request(`/api/minecraft/${id}/files/upload`, {
+      method: 'POST',
+      body: formData
+    });
+  }
+
+  // Minecraft Mods & Plugins
+  async listMinecraftMods(id: string): Promise<MinecraftInstalledModsResponse> {
+    return this.request(`/api/minecraft/${id}/mods`);
+  }
+
+  async installMinecraftMod(id: string, data: { download_url: string; filename: string; target_dir: 'mods' | 'plugins' }): Promise<{ status: string; filename: string; size: number; dir: string }> {
+    return this.request(`/api/minecraft/${id}/mods/install`, {
+      method: 'POST',
+      body: JSON.stringify(data)
+    });
+  }
+
+  async toggleMinecraftMod(id: string, dir: 'mods' | 'plugins', filename: string): Promise<{ status: string; new_filename: string; enabled: boolean }> {
+    return this.request(`/api/minecraft/${id}/mods/toggle`, {
+      method: 'POST',
+      body: JSON.stringify({ dir, filename })
+    });
+  }
+
+  async deleteMinecraftMod(id: string, dir: 'mods' | 'plugins', filename: string): Promise<{ status: string; filename: string }> {
+    return this.request(`/api/minecraft/${id}/mods?dir=${encodeURIComponent(dir)}&filename=${encodeURIComponent(filename)}`, {
+      method: 'DELETE'
+    });
+  }
+
+  // Modrinth Search & Project Versions Proxy
+  async searchModrinth(params: { query?: string; loader?: string; version?: string; project_type?: string; limit?: number; offset?: number }): Promise<ModrinthSearchResponse> {
+    const q = new URLSearchParams();
+    if (params.query) q.set('query', params.query);
+    if (params.loader) q.set('loader', params.loader);
+    if (params.version) q.set('version', params.version);
+    if (params.project_type) q.set('project_type', params.project_type);
+    if (params.limit) q.set('limit', String(params.limit));
+    if (params.offset) q.set('offset', String(params.offset));
+    return this.request(`/api/minecraft/modrinth/search?${q.toString()}`);
+  }
+
+  async getModrinthVersions(projectId: string, loader?: string, version?: string): Promise<ModrinthVersionItem[]> {
+    const q = new URLSearchParams();
+    q.set('project_id', projectId);
+    if (loader) q.set('loader', loader);
+    if (version) q.set('version', version);
+    return this.request(`/api/minecraft/modrinth/versions?${q.toString()}`);
   }
 }
 
