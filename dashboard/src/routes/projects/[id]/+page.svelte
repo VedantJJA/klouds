@@ -19,15 +19,19 @@
     Layers,
     GitBranch,
     Sparkles,
-    CheckCircle2
+    CheckCircle2,
+    Gamepad2,
+    ArrowRight
   } from '@lucide/svelte';
+  import type { MinecraftServer } from '$lib/api/client';
 
   const projectId = $derived($page.params.id || '');
 
   let project = $state<Project | null>(null);
   let services = $state<Service[]>([]);
   let databases = $state<Database[]>([]);
-  let activeTab = $state<'services' | 'databases' | 'settings'>('services');
+  let minecraftServers = $state<MinecraftServer[]>([]);
+  let activeTab = $state<'services' | 'databases' | 'minecraft' | 'settings'>('services');
   let loading = $state(true);
   let error = $state('');
 
@@ -71,14 +75,19 @@
     loading = true;
     error = '';
     try {
-      const [p, s, d] = await Promise.all([
+      const [p, s, d, m] = await Promise.all([
         api.getProject(projectId),
         api.listServices(projectId),
-        api.listDatabases(projectId)
+        api.listDatabases(projectId),
+        api.listMinecraftServers(projectId)
       ]);
       project = p;
       services = s || [];
       databases = d || [];
+      minecraftServers = m || [];
+      if (p?.description?.toLowerCase().includes('minecraft') && (s || []).length === 0) {
+        activeTab = 'minecraft';
+      }
     } catch (err: any) {
       error = err.message || 'Failed to load project details';
     } finally {
@@ -200,6 +209,11 @@
     </div>
 
     <div class="flex items-center gap-2">
+      <a href="/minecraft" class="btn btn-secondary btn-sm">
+        <Gamepad2 size={14} style="color: var(--color-success);" />
+        <span>New Minecraft Server</span>
+      </a>
+
       <button class="btn btn-secondary btn-sm" onclick={() => showDbModal = true}>
         <DatabaseIcon size={14} />
         <span>New Database</span>
@@ -230,6 +244,15 @@
     >
       <DatabaseIcon size={14} />
       <span>Databases ({databases.length})</span>
+    </button>
+
+    <button
+      class="tab-btn"
+      class:active={activeTab === 'minecraft'}
+      onclick={() => activeTab = 'minecraft'}
+    >
+      <Gamepad2 size={14} />
+      <span>Minecraft ({minecraftServers.length})</span>
     </button>
 
     <button
@@ -353,6 +376,64 @@
                 <td>
                   <a href={`/databases/${db.id}`} class="btn btn-secondary btn-sm">
                     Manage
+                  </a>
+                </td>
+              </tr>
+            {/each}
+          </tbody>
+        </table>
+      </div>
+    {/if}
+  {/if}
+
+  <!-- Tab 3: Minecraft Servers -->
+  {#if activeTab === 'minecraft'}
+    {#if minecraftServers.length === 0}
+      <div class="empty-state">
+        <div class="empty-state-icon">
+          <Gamepad2 size={36} style="color: var(--color-success);" />
+        </div>
+        <h3>No Minecraft Servers Deployed</h3>
+        <p class="text-sm text-muted mb-4">Deploy Paper, Fabric, Vanilla, or Bedrock servers with live console & RCON access in this project.</p>
+        <a href="/minecraft" class="btn btn-primary btn-sm inline-flex items-center gap-1">
+          <Plus size={14} />
+          <span>Deploy Minecraft Server</span>
+        </a>
+      </div>
+    {:else}
+      <div class="table-wrapper">
+        <table>
+          <thead>
+            <tr>
+              <th>Server</th>
+              <th>Software Engine</th>
+              <th>Status</th>
+              <th>Port</th>
+              <th>Action</th>
+            </tr>
+          </thead>
+          <tbody>
+            {#each minecraftServers as srv}
+              <tr>
+                <td>
+                  <a href={`/minecraft/${srv.id}`} class="font-semibold text-white">
+                    {srv.name}
+                  </a>
+                  <div class="text-xs text-muted font-mono">{srv.slug}</div>
+                </td>
+                <td>
+                  <span class="badge badge-secondary">{srv.server_type} v{srv.version}</span>
+                </td>
+                <td>
+                  <span class="badge" class:badge-running={srv.status === 'running'}>
+                    {srv.status === 'running' ? 'Online' : srv.status === 'creating' ? 'Starting...' : 'Stopped'}
+                  </span>
+                </td>
+                <td class="font-mono text-xs text-success">:{srv.server_port}</td>
+                <td>
+                  <a href={`/minecraft/${srv.id}`} class="btn btn-secondary btn-sm inline-flex items-center gap-1">
+                    <span>Dashboard</span>
+                    <ArrowRight size={12} />
                   </a>
                 </td>
               </tr>
