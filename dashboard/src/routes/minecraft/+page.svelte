@@ -450,14 +450,15 @@
 
 <!-- Provision New Minecraft Server Modal -->
 {#if showModal}
-  <div class="modal-backdrop" onclick={() => (showModal = false)}>
-    <div class="modal-content modal-lg" onclick={(e) => e.stopPropagation()}>
+  <div class="modal-overlay" role="dialog" aria-modal="true">
+    <button type="button" class="modal-backdrop" onclick={() => (showModal = false)} aria-label="Close modal"></button>
+    <div class="modal-content modal-mc" onclick={(e) => e.stopPropagation()}>
       <div class="modal-header">
         <div class="flex items-center gap-2">
           <Gamepad2 size={20} style="color: var(--color-success);" />
           <h2 class="modal-title">New Minecraft Server</h2>
         </div>
-        <button class="modal-close" onclick={() => (showModal = false)} aria-label="Close modal">
+        <button type="button" class="btn-icon" onclick={() => (showModal = false)} aria-label="Close modal">
           <X size={18} />
         </button>
       </div>
@@ -1040,6 +1041,63 @@
 
   .btn-icon-danger:hover {
     color: var(--color-danger);
+  }
+
+  /* Minecraft Provision Modal */
+  .modal-mc {
+    max-width: 640px;
+    width: 100%;
+    max-height: 88vh;
+    display: flex;
+    flex-direction: column;
+    margin: auto;
+    background: var(--color-surface);
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-lg);
+    box-shadow: 0 20px 60px rgba(0, 0, 0, 0.7);
+    overflow: hidden;
+  }
+
+  .modal-mc form {
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+    flex: 1;
+    min-height: 0;
+  }
+
+  .modal-mc .modal-body {
+    overflow-y: auto;
+    max-height: calc(88vh - 130px);
+    padding: var(--sp-5);
+  }
+
+  .modal-mc .modal-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: var(--sp-4) var(--sp-5);
+    border-bottom: 1px solid var(--color-border);
+    background: var(--color-surface);
+    flex-shrink: 0;
+  }
+
+  .modal-mc .modal-footer {
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+    gap: var(--sp-3);
+    padding: var(--sp-4) var(--sp-5);
+    border-top: 1px solid var(--color-border);
+    background: var(--color-surface-subtle);
+    flex-shrink: 0;
+  }
+
+  .modal-title {
+    font-size: 1.125rem;
+    font-weight: 700;
+    color: var(--color-ink);
+    margin: 0;
   }
 
   /* Software Picker in Modal */
