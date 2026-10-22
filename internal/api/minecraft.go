@@ -100,20 +100,22 @@ func (h *MinecraftHandler) Create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if req.Name == "" || req.ProjectID == "" {
-		writeError(w, http.StatusBadRequest, "name and project_id are required")
+	if strings.TrimSpace(req.Name) == "" {
+		writeError(w, http.StatusBadRequest, "server name is required")
 		return
 	}
 
-	// Verify project ownership
-	project, err := h.queries.GetProjectByID(r.Context(), req.ProjectID)
-	if err != nil {
-		writeError(w, http.StatusNotFound, "project not found")
-		return
-	}
-	if role != "admin" && project.UserID != userID {
-		writeError(w, http.StatusForbidden, "access denied")
-		return
+	// Verify project ownership if provided
+	if strings.TrimSpace(req.ProjectID) != "" {
+		project, err := h.queries.GetProjectByID(r.Context(), req.ProjectID)
+		if err != nil {
+			writeError(w, http.StatusNotFound, "project not found")
+			return
+		}
+		if role != "admin" && project.UserID != userID {
+			writeError(w, http.StatusForbidden, "access denied")
+			return
+		}
 	}
 
 	// Check quota
@@ -760,13 +762,35 @@ func (h *MinecraftHandler) Players(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	entries, _ := h.readWhitelistFile(srv.Slug)
+	whitelistNames := make([]string, 0, len(entries))
+	for _, e := range entries {
+		if e.Name != "" {
+			whitelistNames = append(whitelistNames, e.Name)
+		}
+	}
+
+	whitelistEnabled := srv.WhitelistEnabled
+	propsFile := filepath.Join(h.dataDir, "minecraft", srv.Slug, "server.properties")
+	if propsData, err := os.ReadFile(propsFile); err == nil {
+		for _, line := range strings.Split(string(propsData), "\n") {
+			trimmed := strings.TrimSpace(line)
+			if strings.HasPrefix(trimmed, "white-list=") {
+				val := strings.TrimPrefix(trimmed, "white-list=")
+				whitelistEnabled = strings.EqualFold(val, "true")
+				break
+			}
+		}
+	}
+
 	resp := map[string]interface{}{
 		"server_id":         srv.ID,
 		"max_players":       srv.MaxPlayers,
 		"current_players":   0,
 		"online_players":    []string{},
 		"ops":               opsList,
-		"whitelist_enabled": srv.WhitelistEnabled,
+		"whitelist_enabled": whitelistEnabled,
+		"whitelist":         whitelistNames,
 	}
 
 	if h.containers != nil && srv.ContainerID != nil && *srv.ContainerID != "" && h.containers.IsRunning(r.Context(), *srv.ContainerID) {

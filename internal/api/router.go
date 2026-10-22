@@ -180,6 +180,17 @@ func NewRouter(cfg RouterConfig) *chi.Mux {
 			r.Get("/minecraft/{id}/properties", minecraftHandler.Properties)
 			r.Put("/minecraft/{id}/properties", minecraftHandler.UpdateProperties)
 			r.Get("/minecraft/{id}/players", minecraftHandler.Players)
+			r.Post("/minecraft/{id}/whitelist/toggle", minecraftHandler.ToggleWhitelist)
+			r.Post("/minecraft/{id}/whitelist/add", minecraftHandler.AddWhitelist)
+			r.Post("/minecraft/{id}/whitelist/remove", minecraftHandler.RemoveWhitelist)
+
+			// Minecraft World Backups & Google Drive
+			r.Get("/minecraft/{id}/backups", minecraftHandler.ListBackups)
+			r.Post("/minecraft/{id}/backups", minecraftHandler.CreateBackup)
+			r.Get("/minecraft/{id}/backups/download", minecraftHandler.DownloadBackup)
+			r.Delete("/minecraft/{id}/backups", minecraftHandler.DeleteBackup)
+			r.Post("/minecraft/{id}/backups/restore", minecraftHandler.RestoreBackup)
+			r.Post("/minecraft/{id}/backups/gdrive", minecraftHandler.UploadBackupToGDrive)
 
 			// Minecraft File Manager
 			r.Get("/minecraft/{id}/files", minecraftHandler.ListFiles)

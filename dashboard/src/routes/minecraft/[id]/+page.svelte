@@ -5,7 +5,8 @@
   import {
     api,
     type MinecraftServer,
-    type MinecraftPlayersResponse
+    type MinecraftPlayersResponse,
+    type MinecraftBackupItem
   } from '$lib/api/client';
   import Breadcrumbs from '$lib/components/common/Breadcrumbs.svelte';
   import FileManager from '$lib/components/minecraft/FileManager.svelte';
@@ -34,7 +35,12 @@
     Lock,
     Save,
     Folder,
-    Puzzle
+    Puzzle,
+    Archive,
+    Download,
+    Cloud,
+    ExternalLink,
+    CheckCircle2
   } from '@lucide/svelte';
 
   const serverId = $derived($page.params.id || '');
@@ -45,7 +51,7 @@
   let error = $state('');
 
   // Active Tab
-  let activeTab = $state<'console' | 'files' | 'mods' | 'players' | 'properties' | 'settings'>('console');
+  let activeTab = $state<'console' | 'files' | 'mods' | 'players' | 'backups' | 'properties' | 'settings'>('console');
 
   // Dynamic Minecraft versions
   let availableVersions = $state<string[]>([
@@ -99,6 +105,18 @@
   let propertiesSaving = $state(false);
   let propertiesSuccess = $state('');
   let propertiesError = $state('');
+
+  // Backups & Google Drive tab states
+  let backups = $state<MinecraftBackupItem[]>([]);
+  let backupsLoading = $state(false);
+  let backupCreating = $state(false);
+  let backupActionLoading = $state<Record<string, boolean>>({});
+  let gdriveUploading = $state<Record<string, boolean>>({});
+  let gdriveUploadSuccess = $state<Record<string, string>>({});
+  let gdriveAccessToken = $state('');
+  let gdriveConnected = $state(false);
+  let backupSuccess = $state('');
+  let backupError = $state('');
 
   function populateSettings(s: MinecraftServer) {
     settingsName = s.name;
@@ -193,41 +211,62 @@
 
   // Power actions
   async function handleStart() {
-    if (!serverId) return;
+    if (!serverId || !server) return;
     actionLoading = true;
+    server = { ...server, status: 'starting' };
     try {
       await api.startMinecraftServer(serverId);
-      await loadServerData();
-      await pollLogs();
+      // Poll until container is running
+      for (let i = 0; i < 20; i++) {
+        await new Promise(r => setTimeout(r, 1500));
+        await loadServerData();
+        await pollLogs();
+        if (server?.status === 'running') break;
+      }
     } catch (err: any) {
       alert(err.message || 'Failed to start server');
+      await loadServerData();
     } finally {
       actionLoading = false;
     }
   }
 
   async function handleStop() {
-    if (!serverId) return;
+    if (!serverId || !server) return;
     actionLoading = true;
+    server = { ...server, status: 'stopping' };
     try {
       await api.stopMinecraftServer(serverId);
-      await loadServerData();
+      // Poll until container is stopped
+      for (let i = 0; i < 20; i++) {
+        await new Promise(r => setTimeout(r, 1500));
+        await loadServerData();
+        if (server?.status === 'stopped') break;
+      }
     } catch (err: any) {
       alert(err.message || 'Failed to stop server');
+      await loadServerData();
     } finally {
       actionLoading = false;
     }
   }
 
   async function handleRestart() {
-    if (!serverId) return;
+    if (!serverId || !server) return;
     actionLoading = true;
+    server = { ...server, status: 'starting' };
     try {
       await api.restartMinecraftServer(serverId);
-      await loadServerData();
-      await pollLogs();
+      // Poll until container is running
+      for (let i = 0; i < 25; i++) {
+        await new Promise(r => setTimeout(r, 1500));
+        await loadServerData();
+        await pollLogs();
+        if (server?.status === 'running') break;
+      }
     } catch (err: any) {
       alert(err.message || 'Failed to restart server');
+      await loadServerData();
     } finally {
       actionLoading = false;
     }
@@ -380,19 +419,167 @@
     }
   }
 
-  async function handleAddWhitelist() {
-    const user = newWhitelistUsername.trim();
-    if (!user || !serverId) return;
+  async function handleToggleWhitelist() {
+    if (!serverId || !playersData) return;
     playerActionLoading = true;
+    const prev = playersData.whitelist_enabled;
+    playersData.whitelist_enabled = !prev;
     try {
-      await api.sendMinecraftCommand(serverId, `whitelist add ${user}`);
-      newWhitelistUsername = '';
-      await loadPlayers();
+      const res = await api.toggleMinecraftWhitelist(serverId);
+      playersData.whitelist_enabled = res.whitelist_enabled;
+      if (res.whitelist) {
+        playersData.whitelist = res.whitelist;
+      }
     } catch (err: any) {
-      alert(err.message || 'Failed to whitelist player');
+      playersData.whitelist_enabled = prev;
+      alert(err.message || 'Failed to toggle whitelist');
     } finally {
       playerActionLoading = false;
     }
+  }
+
+  async function handleAddWhitelist() {
+    const user = newWhitelistUsername.trim();
+    if (!user || !serverId || !playersData) return;
+    playerActionLoading = true;
+    if (!playersData.whitelist) playersData.whitelist = [];
+    if (!playersData.whitelist.some(u => u.toLowerCase() === user.toLowerCase())) {
+      playersData.whitelist = [...playersData.whitelist, user];
+    }
+    const entered = user;
+    newWhitelistUsername = '';
+    try {
+      const res = await api.addMinecraftWhitelist(serverId, entered);
+      if (res.whitelist) {
+        playersData.whitelist = res.whitelist;
+      }
+    } catch (err: any) {
+      alert(err.message || 'Failed to whitelist player');
+      await loadPlayers();
+    } finally {
+      playerActionLoading = false;
+    }
+  }
+
+  async function handleRemoveWhitelist(user: string) {
+    if (!user || !serverId || !playersData) return;
+    playerActionLoading = true;
+    if (playersData.whitelist) {
+      playersData.whitelist = playersData.whitelist.filter(u => u.toLowerCase() !== user.toLowerCase());
+    }
+    try {
+      const res = await api.removeMinecraftWhitelist(serverId, user);
+      if (res.whitelist) {
+        playersData.whitelist = res.whitelist;
+      }
+    } catch (err: any) {
+      alert(err.message || 'Failed to remove player from whitelist');
+      await loadPlayers();
+    } finally {
+      playerActionLoading = false;
+    }
+  }
+
+  // Backup & Google Drive actions
+  async function loadBackups() {
+    if (!serverId) return;
+    backupsLoading = true;
+    backupError = '';
+    try {
+      const res = await api.listMinecraftBackups(serverId);
+      backups = res.backups || [];
+    } catch (err: any) {
+      backupError = err.message || 'Failed to load backups';
+    } finally {
+      backupsLoading = false;
+    }
+  }
+
+  async function handleCreateBackup() {
+    if (!serverId) return;
+    backupCreating = true;
+    backupError = '';
+    backupSuccess = '';
+    try {
+      const created = await api.createMinecraftBackup(serverId);
+      backups = [created, ...backups];
+      backupSuccess = `World backup "${created.name}" (${created.size_formatted}) created successfully!`;
+    } catch (err: any) {
+      backupError = err.message || 'Failed to create backup';
+    } finally {
+      backupCreating = false;
+    }
+  }
+
+  async function handleDeleteBackup(name: string) {
+    if (!confirm(`Are you sure you want to delete backup "${name}"?`)) return;
+    backupActionLoading[name] = true;
+    backupError = '';
+    try {
+      await api.deleteMinecraftBackup(serverId, name);
+      backups = backups.filter(b => b.name !== name);
+    } catch (err: any) {
+      alert(err.message || 'Failed to delete backup');
+    } finally {
+      backupActionLoading[name] = false;
+    }
+  }
+
+  async function handleRestoreBackup(name: string) {
+    if (server?.status === 'running') {
+      alert('Please STOP the Minecraft server first before restoring a world backup to prevent corruption.');
+      return;
+    }
+    if (!confirm(`Are you sure you want to restore world from "${name}"? Existing world files will be replaced (a safety copy will be made automatically).`)) {
+      return;
+    }
+    backupActionLoading[name] = true;
+    backupError = '';
+    backupSuccess = '';
+    try {
+      await api.restoreMinecraftBackup(serverId, name);
+      backupSuccess = `World successfully restored from "${name}"! You can now start the server.`;
+    } catch (err: any) {
+      alert(err.message || 'Failed to restore backup');
+    } finally {
+      backupActionLoading[name] = false;
+    }
+  }
+
+  async function handleUploadToGDrive(name: string) {
+    if (!gdriveAccessToken.trim()) {
+      alert('Please connect Google Drive or paste your Google Drive Access Token first in the section above.');
+      return;
+    }
+    gdriveUploading[name] = true;
+    backupError = '';
+    try {
+      const res = await api.uploadMinecraftBackupToGDrive(serverId, name, gdriveAccessToken.trim());
+      if (res.success) {
+        gdriveUploadSuccess[name] = res.web_view_link;
+        backupSuccess = `Backup "${name}" successfully uploaded to Google Drive!`;
+      }
+    } catch (err: any) {
+      backupError = err.message || 'Failed to upload backup to Google Drive';
+    } finally {
+      gdriveUploading[name] = false;
+    }
+  }
+
+  function handleSaveGDriveToken() {
+    if (!gdriveAccessToken.trim()) return;
+    if (typeof window !== 'undefined') {
+      localStorage.setItem('klouds_gdrive_access_token', gdriveAccessToken.trim());
+    }
+    gdriveConnected = true;
+  }
+
+  function handleDisconnectGDrive() {
+    if (typeof window !== 'undefined') {
+      localStorage.removeItem('klouds_gdrive_access_token');
+    }
+    gdriveAccessToken = '';
+    gdriveConnected = false;
   }
 
   async function handleKick(user: string) {
@@ -429,6 +616,14 @@
     loadServerData();
     pollLogs();
     logPollInterval = setInterval(pollLogs, 3000);
+
+    if (typeof window !== 'undefined') {
+      const savedToken = localStorage.getItem('klouds_gdrive_access_token');
+      if (savedToken) {
+        gdriveAccessToken = savedToken;
+        gdriveConnected = true;
+      }
+    }
   });
 
   onDestroy(() => {
@@ -442,6 +637,8 @@
       loadPlayers();
     } else if (activeTab === 'properties') {
       loadProperties();
+    } else if (activeTab === 'backups') {
+      loadBackups();
     }
   });
 </script>
@@ -470,9 +667,16 @@
             {server.server_type}
           </span>
           <span class="badge badge-version">v{server.version}</span>
-          <div class="server-status-pill" class:running={server.status === 'running'}>
+          <div
+            class="server-status-pill"
+            class:running={server.status === 'running'}
+            class:starting={server.status === 'starting' || server.status === 'creating'}
+            class:stopping={server.status === 'stopping'}
+          >
             <span class="status-indicator-dot"></span>
-            <span>{server.status === 'running' ? 'Online' : server.status === 'creating' ? 'Starting...' : 'Stopped'}</span>
+            <span>
+              {server.status === 'running' ? 'Online' : server.status === 'starting' || server.status === 'creating' ? 'Starting...' : server.status === 'stopping' ? 'Stopping...' : 'Stopped'}
+            </span>
           </div>
         </div>
 
@@ -503,12 +707,7 @@
     <!-- Power Action Controls -->
     <div class="banner-actions-bar">
       <div class="power-buttons">
-        {#if server.status !== 'running'}
-          <button class="btn btn-sm btn-power-start" onclick={handleStart} disabled={actionLoading}>
-            <Play size={14} />
-            <span>Start Server</span>
-          </button>
-        {:else}
+        {#if server.status === 'running'}
           <button class="btn btn-sm btn-power-restart" onclick={handleRestart} disabled={actionLoading}>
             <RotateCw size={14} class={actionLoading ? 'spin' : ''} />
             <span>Restart</span>
@@ -516,6 +715,21 @@
           <button class="btn btn-sm btn-power-stop" onclick={handleStop} disabled={actionLoading}>
             <Square size={14} />
             <span>Stop</span>
+          </button>
+        {:else if server.status === 'starting' || server.status === 'creating'}
+          <button class="btn btn-sm btn-power-start" disabled>
+            <RotateCw size={14} class="spin" />
+            <span>Starting Server...</span>
+          </button>
+        {:else if server.status === 'stopping'}
+          <button class="btn btn-sm btn-power-stop" disabled>
+            <RotateCw size={14} class="spin" />
+            <span>Stopping Server...</span>
+          </button>
+        {:else}
+          <button class="btn btn-sm btn-power-start" onclick={handleStart} disabled={actionLoading}>
+            <Play size={14} />
+            <span>Start Server</span>
           </button>
         {/if}
       </div>
@@ -568,6 +782,15 @@
     >
       <Users size={14} />
       <span>Players & Operators</span>
+    </button>
+
+    <button
+      class="tab-btn"
+      class:active={activeTab === 'backups'}
+      onclick={() => { activeTab = 'backups'; loadBackups(); }}
+    >
+      <HardDrive size={14} />
+      <span>Backups & Google Drive</span>
     </button>
 
     <button
@@ -997,19 +1220,24 @@
             class="btn btn-sm"
             class:btn-success={playersData?.whitelist_enabled}
             class:btn-secondary={!playersData?.whitelist_enabled}
-            onclick={() => handleSendCommand(playersData?.whitelist_enabled ? 'whitelist off' : 'whitelist on')}
+            onclick={handleToggleWhitelist}
+            disabled={playerActionLoading}
           >
-            {playersData?.whitelist_enabled ? 'Whitelist Enabled' : 'Whitelist Disabled'}
+            {#if playerActionLoading}
+              <RotateCw size={13} class="spin" />
+            {/if}
+            <span>{playersData?.whitelist_enabled ? 'Whitelist Enabled' : 'Whitelist Disabled'}</span>
           </button>
         </div>
 
         <div class="card-body">
-          <div class="op-input-group">
+          <div class="op-input-group mb-3">
             <input
               type="text"
               class="form-input"
               placeholder="Player username..."
               bind:value={newWhitelistUsername}
+              onkeydown={(e) => { if (e.key === 'Enter') handleAddWhitelist(); }}
             />
             <button
               class="btn btn-secondary btn-sm"
@@ -1020,11 +1248,274 @@
               <span>Add to Whitelist</span>
             </button>
           </div>
+
+          {#if !playersData || !playersData.whitelist || playersData.whitelist.length === 0}
+            <p class="text-xs text-muted">No players whitelisted yet. When whitelist is enabled, only approved players can join.</p>
+          {:else}
+            <div class="ops-list">
+              {#each playersData.whitelist as player}
+                <div class="op-row">
+                  <div class="flex items-center gap-2">
+                    <img
+                      src="https://mc-heads.net/avatar/{player}/24"
+                      alt={player}
+                      class="player-head-sm"
+                      loading="lazy"
+                    />
+                    <span class="font-mono text-sm">{player}</span>
+                  </div>
+                  <button
+                    class="btn btn-secondary btn-xs text-danger"
+                    onclick={() => handleRemoveWhitelist(player)}
+                    disabled={playerActionLoading}
+                    title="Remove from whitelist"
+                  >
+                    <UserMinus size={12} />
+                    <span>Remove</span>
+                  </button>
+                </div>
+              {/each}
+            </div>
+          {/if}
         </div>
       </div>
     </div>
 
-  <!-- Tab 4: Raw server.properties -->
+  <!-- Tab 5: Backups & Google Drive -->
+  {:else if activeTab === 'backups'}
+    <div class="space-y-4">
+      {#if backupSuccess}
+        <div class="alert alert-success flex items-center justify-between">
+          <div class="flex items-center gap-2">
+            <CheckCircle2 size={16} />
+            <span>{backupSuccess}</span>
+          </div>
+          <button class="btn-icon btn-xs" onclick={() => backupSuccess = ''}>×</button>
+        </div>
+      {/if}
+
+      {#if backupError}
+        <div class="alert alert-danger flex items-center justify-between">
+          <div class="flex items-center gap-2">
+            <AlertCircle size={16} />
+            <span>{backupError}</span>
+          </div>
+          <button class="btn-icon btn-xs" onclick={() => backupError = ''}>×</button>
+        </div>
+      {/if}
+
+      <!-- Google Drive Cloud Sync Card -->
+      <div class="card gdrive-sync-card">
+        <div class="card-header flex justify-between items-center">
+          <div class="flex items-center gap-3">
+            <div class="gdrive-icon-box">
+              <Cloud size={24} style="color: #4285F4;" />
+            </div>
+            <div>
+              <div class="flex items-center gap-2">
+                <h3 class="m-0">Google Drive Cloud Storage</h3>
+                {#if gdriveConnected}
+                  <span class="badge badge-success text-xs">Connected</span>
+                {/if}
+              </div>
+              <p class="text-xs text-muted mt-0.5">
+                Automatically export world archives off-site to your Google Drive folder "Klouds Minecraft Backups".
+              </p>
+            </div>
+          </div>
+          {#if gdriveConnected}
+            <button class="btn btn-secondary btn-xs" onclick={handleDisconnectGDrive}>
+              <span>Disconnect</span>
+            </button>
+          {/if}
+        </div>
+
+        <div class="card-body">
+          {#if !gdriveConnected}
+            <div class="gdrive-input-box">
+              <label class="form-label" for="gdrive-token-input">Google Drive OAuth Access Token</label>
+              <div class="flex items-center gap-2">
+                <input
+                  id="gdrive-token-input"
+                  type="password"
+                  class="form-input font-mono text-xs flex-1"
+                  placeholder="Paste Google Drive OAuth Access Token (ya29...)"
+                  bind:value={gdriveAccessToken}
+                  onkeydown={(e) => { if (e.key === 'Enter') handleSaveGDriveToken(); }}
+                />
+                <button
+                  class="btn btn-primary btn-sm"
+                  onclick={handleSaveGDriveToken}
+                  disabled={!gdriveAccessToken.trim()}
+                >
+                  <Cloud size={14} />
+                  <span>Connect Drive</span>
+                </button>
+              </div>
+              <p class="text-xs text-muted mt-1.5">
+                Provide a Google OAuth access token with Drive file scope (<code class="text-xs">https://www.googleapis.com/auth/drive.file</code>).
+              </p>
+            </div>
+          {:else}
+            <div class="gdrive-connected-banner">
+              <CheckCircle2 size={16} style="color: var(--color-success);" />
+              <span class="text-xs">
+                Google Drive linked! Click <strong>"Upload to Drive"</strong> on any world backup below to stream it directly to your Google Drive.
+              </span>
+            </div>
+          {/if}
+        </div>
+      </div>
+
+      <!-- World Backups List Card -->
+      <div class="card">
+        <div class="card-header flex justify-between items-center">
+          <div>
+            <h3>World Backups</h3>
+            <p class="text-xs text-muted">Point-in-time snapshots of your world, nether, end, and configuration files</p>
+          </div>
+
+          <div class="flex items-center gap-2">
+            <button
+              class="btn btn-secondary btn-sm"
+              onclick={loadBackups}
+              disabled={backupsLoading || backupCreating}
+              title="Refresh backups list"
+            >
+              <RotateCw size={13} class={backupsLoading ? 'spin' : ''} />
+              <span>Refresh</span>
+            </button>
+            <button
+              class="btn btn-primary btn-sm"
+              onclick={handleCreateBackup}
+              disabled={backupCreating}
+            >
+              {#if backupCreating}
+                <RotateCw size={14} class="spin" />
+                <span>Creating Backup...</span>
+              {:else}
+                <Archive size={14} />
+                <span>Create World Backup</span>
+              {/if}
+            </button>
+          </div>
+        </div>
+
+        <div class="card-body">
+          {#if backupsLoading && backups.length === 0}
+            <div class="loading-state py-8">
+              <div class="spinner"></div>
+              <p class="text-xs text-muted mt-2">Loading world backups...</p>
+            </div>
+          {:else if backups.length === 0}
+            <div class="empty-state py-8 text-center">
+              <div class="empty-icon-box mb-2">
+                <Archive size={32} style="color: var(--color-ink-muted);" />
+              </div>
+              <h4>No World Backups Created Yet</h4>
+              <p class="text-xs text-muted mb-4">Click "Create World Backup" above to generate your first complete snapshot.</p>
+              <button class="btn btn-primary btn-sm" onclick={handleCreateBackup} disabled={backupCreating}>
+                <Archive size={14} />
+                <span>Create World Backup</span>
+              </button>
+            </div>
+          {:else}
+            <div class="table-wrapper">
+              <table class="table">
+                <thead>
+                  <tr>
+                    <th>Archive Name</th>
+                    <th>Created</th>
+                    <th>File Size</th>
+                    <th>Google Drive Sync</th>
+                    <th class="text-right">Actions</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {#each backups as b (b.name)}
+                    <tr>
+                      <td>
+                        <div class="flex items-center gap-2">
+                          <Archive size={15} style="color: var(--color-primary);" />
+                          <span class="font-mono text-xs font-semibold text-white">{b.name}</span>
+                        </div>
+                      </td>
+                      <td class="text-xs text-muted">
+                        {new Date(b.created_at).toLocaleString()}
+                      </td>
+                      <td>
+                        <span class="badge badge-secondary font-mono">{b.size_formatted}</span>
+                      </td>
+                      <td>
+                        {#if gdriveUploadSuccess[b.name]}
+                          <a
+                            href={gdriveUploadSuccess[b.name]}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            class="btn btn-success btn-xs inline-flex items-center gap-1"
+                          >
+                            <Cloud size={12} />
+                            <span>View in Drive</span>
+                            <ExternalLink size={10} />
+                          </a>
+                        {:else if gdriveUploading[b.name]}
+                          <span class="inline-flex items-center gap-1 text-xs text-primary font-medium">
+                            <RotateCw size={12} class="spin" />
+                            <span>Uploading to Drive...</span>
+                          </span>
+                        {:else}
+                          <button
+                            class="btn btn-secondary btn-xs inline-flex items-center gap-1"
+                            onclick={() => handleUploadToGDrive(b.name)}
+                            disabled={gdriveUploading[b.name]}
+                            title={gdriveConnected ? "Upload this backup to your Google Drive" : "Connect Google Drive in the card above to upload"}
+                          >
+                            <Cloud size={12} style="color: #4285F4;" />
+                            <span>Upload to Drive</span>
+                          </button>
+                        {/if}
+                      </td>
+                      <td class="text-right">
+                        <div class="flex items-center justify-end gap-2">
+                          <a
+                            href={`/api/minecraft/${server.id}/backups/download?name=${encodeURIComponent(b.name)}`}
+                            download={b.name}
+                            class="btn btn-secondary btn-xs inline-flex items-center gap-1"
+                            title="Download backup file"
+                          >
+                            <Download size={12} />
+                            <span>Download</span>
+                          </a>
+                          <button
+                            class="btn btn-secondary btn-xs inline-flex items-center gap-1"
+                            onclick={() => handleRestoreBackup(b.name)}
+                            disabled={backupActionLoading[b.name] || server.status === 'running'}
+                            title={server.status === 'running' ? 'Stop server first to restore' : 'Restore world from this backup'}
+                          >
+                            <RotateCw size={12} />
+                            <span>Restore</span>
+                          </button>
+                          <button
+                            class="btn-icon-danger btn-xs"
+                            onclick={() => handleDeleteBackup(b.name)}
+                            disabled={backupActionLoading[b.name]}
+                            title="Delete backup"
+                          >
+                            <Trash2 size={13} />
+                          </button>
+                        </div>
+                      </td>
+                    </tr>
+                  {/each}
+                </tbody>
+              </table>
+            </div>
+          {/if}
+        </div>
+      </div>
+    </div>
+
+  <!-- Tab 6: Raw server.properties -->
   {:else if activeTab === 'properties'}
     <div class="card">
       <div class="card-header flex justify-between items-center">
@@ -1187,6 +1678,16 @@
     color: var(--color-success);
   }
 
+  .server-status-pill.starting {
+    background: rgba(59, 130, 246, 0.15);
+    color: #60a5fa;
+  }
+
+  .server-status-pill.stopping {
+    background: rgba(245, 158, 11, 0.15);
+    color: #f59e0b;
+  }
+
   .status-indicator-dot {
     width: 6px;
     height: 6px;
@@ -1197,6 +1698,18 @@
   .server-status-pill.running .status-indicator-dot {
     background: var(--color-success);
     box-shadow: 0 0 6px var(--color-success);
+  }
+
+  .server-status-pill.starting .status-indicator-dot {
+    background: #60a5fa;
+    box-shadow: 0 0 6px #60a5fa;
+    animation: pulse 1.5s infinite;
+  }
+
+  .server-status-pill.stopping .status-indicator-dot {
+    background: #f59e0b;
+    box-shadow: 0 0 6px #f59e0b;
+    animation: pulse 1s infinite;
   }
 
   /* Badges */
@@ -1565,5 +2078,40 @@
   .loading-state {
     text-align: center;
     padding: 5rem 2rem;
+  }
+
+  /* Backups & Google Drive Tab Styles */
+  .gdrive-sync-card {
+    border: 1px solid rgba(66, 133, 244, 0.25);
+    background: linear-gradient(135deg, rgba(66, 133, 244, 0.05) 0%, rgba(13, 16, 23, 0.9) 100%);
+  }
+
+  .gdrive-icon-box {
+    width: 42px;
+    height: 42px;
+    border-radius: var(--radius-md);
+    background: rgba(66, 133, 244, 0.12);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border: 1px solid rgba(66, 133, 244, 0.25);
+  }
+
+  .gdrive-input-box {
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+    max-width: 650px;
+  }
+
+  .gdrive-connected-banner {
+    display: flex;
+    align-items: center;
+    gap: 0.625rem;
+    padding: 0.75rem 1rem;
+    background: var(--color-success-subtle);
+    border: 1px solid rgba(16, 185, 129, 0.25);
+    border-radius: var(--radius-md);
+    color: var(--color-success);
   }
 </style>

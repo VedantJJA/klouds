@@ -6,7 +6,7 @@
 
   let projectName = $state('');
   let projectDesc = $state('');
-  let environment = $state<'production' | 'staging' | 'development' | 'minecraft'>('production');
+  let environment = $state<'production' | 'staging' | 'development'>('production');
   let creating = $state(false);
   let createError = $state('');
 
@@ -25,11 +25,7 @@
         name: projectName.trim(),
         description: projectDesc.trim() || `Environment: ${environment}`
       });
-      if (environment === 'minecraft') {
-        goto(`/projects/${created.id}?tab=minecraft`);
-      } else {
-        goto(`/projects/${created.id}`);
-      }
+      goto(`/projects/${created.id}`);
     } catch (err: any) {
       createError = err.message || 'Failed to create project';
       creating = false;
@@ -120,16 +116,6 @@
             >
               <div class="env-badge dev">Development</div>
               <div class="env-sub">Rapid iteration sandbox with fast rebuilds</div>
-            </button>
-
-            <button
-              type="button"
-              class="env-card"
-              class:selected={environment === 'minecraft'}
-              onclick={() => environment = 'minecraft'}
-            >
-              <div class="env-badge mc">Minecraft</div>
-              <div class="env-sub">Dedicated game server with port forwarding & RCON console</div>
             </button>
           </div>
         </div>
@@ -239,11 +225,6 @@
   .env-badge.dev {
     background: rgba(148, 163, 184, 0.2);
     color: var(--color-ink-secondary);
-  }
-
-  .env-badge.mc {
-    background: rgba(16, 185, 129, 0.2);
-    color: #34d399;
   }
 
   .env-sub {

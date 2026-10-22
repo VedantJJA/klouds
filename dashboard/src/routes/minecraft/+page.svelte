@@ -24,7 +24,6 @@
   } from '@lucide/svelte';
 
   let servers = $state<MinecraftServer[]>([]);
-  let projects = $state<Project[]>([]);
   let loading = $state(true);
   let error = $state('');
 
@@ -34,7 +33,6 @@
 
   // Provision Modal State
   let showModal = $state(false);
-  let selectedProjectId = $state('');
   let name = $state('');
   let serverType = $state<'PAPER' | 'VANILLA' | 'FABRIC' | 'FORGE' | 'NEOFORGE' | 'PURPUR' | 'SPIGOT' | 'BEDROCK'>('PAPER');
   let version = $state('1.21.4');
@@ -90,18 +88,10 @@
     loading = true;
     error = '';
     try {
-      const [sRes, pRes, vRes] = await Promise.allSettled([
+      const [sRes, vRes] = await Promise.allSettled([
         api.listMinecraftServers(),
-        api.listProjects(),
         api.getMinecraftVersions()
       ]);
-
-      if (pRes.status === 'fulfilled') {
-        projects = pRes.value || [];
-        if (projects.length > 0 && !selectedProjectId) {
-          selectedProjectId = projects[0].id;
-        }
-      }
 
       if (sRes.status === 'fulfilled') {
         servers = sRes.value || [];
@@ -123,14 +113,13 @@
 
   async function handleProvision(e: SubmitEvent) {
     e.preventDefault();
-    if (!name.trim() || !selectedProjectId) return;
+    if (!name.trim()) return;
 
     provisioning = true;
     provisionError = '';
     try {
       const memoryLimitBytes = memoryLimitGb * 1024 * 1024 * 1024;
       const created = await api.createMinecraftServer({
-        project_id: selectedProjectId,
         name: name.trim(),
         server_type: serverType,
         version: version.trim() || '1.21.4',
@@ -159,19 +148,40 @@
 
   async function handleTogglePower(srv: MinecraftServer) {
     actionLoading[srv.id] = true;
+    const targetAction = srv.status === 'running' ? 'stop' : 'start';
+    // Optimistic DOM update
+    srv.status = targetAction === 'stop' ? 'stopping' : 'starting';
+    servers = [...servers];
+
     try {
-      if (srv.status === 'running') {
+      if (targetAction === 'stop') {
         await api.stopMinecraftServer(srv.id);
-        srv.status = 'stopped';
       } else {
         await api.startMinecraftServer(srv.id);
-        srv.status = 'running';
       }
-      servers = [...servers];
+
+      // Poll until state updates
+      const targetStatus = targetAction === 'stop' ? 'stopped' : 'running';
+      for (let attempt = 0; attempt < 15; attempt++) {
+        await new Promise(r => setTimeout(r, 1500));
+        try {
+          const fresh = await api.getMinecraftServer(srv.id);
+          if (fresh.status === targetStatus) {
+            srv.status = fresh.status;
+            servers = [...servers];
+            break;
+          }
+        } catch {}
+      }
     } catch (err: any) {
       alert(err.message || 'Power action failed');
+      try {
+        const fresh = await api.getMinecraftServer(srv.id);
+        srv.status = fresh.status;
+      } catch {}
     } finally {
       actionLoading[srv.id] = false;
+      servers = [...servers];
     }
   }
 
@@ -232,7 +242,6 @@
     <button
       class="btn btn-primary btn-sm"
       onclick={() => (showModal = true)}
-      disabled={projects.length === 0}
     >
       <Plus size={14} />
       <span>New Minecraft Server</span>
@@ -246,19 +255,12 @@
   </div>
 {/if}
 
-{#if projects.length === 0 && !loading}
-  <div class="card mb-4 text-warning">
-    <p>You need to create at least one project before deploying a Minecraft server.</p>
-    <a href="/projects/new" class="btn btn-primary btn-sm mt-3 inline-flex">Create Project</a>
-  </div>
-{/if}
-
 <!-- Metrics Summary Cards -->
 <div class="metrics-grid mb-5">
   <div class="metric-card">
     <div class="metric-label">Total Servers</div>
     <div class="metric-value">{servers.length}</div>
-    <div class="metric-sub">Across all projects</div>
+    <div class="metric-sub">Active game instances</div>
   </div>
 
   <div class="metric-card">
@@ -340,12 +342,10 @@
         Get started by creating your first multiplayer Minecraft server with automated RCON and console controls.
       {/if}
     </p>
-    {#if projects.length > 0}
-      <button class="btn btn-primary btn-sm mt-3" onclick={() => showModal = true}>
-        <Plus size={14} />
-        <span>Create Minecraft Server</span>
-      </button>
-    {/if}
+    <button class="btn btn-primary btn-sm mt-3" onclick={() => showModal = true}>
+      <Plus size={14} />
+      <span>Create Minecraft Server</span>
+    </button>
   </div>
 {:else}
   <div class="servers-grid">
@@ -353,10 +353,15 @@
       <div class="server-card">
         <!-- Card Top: Status & Badges -->
         <div class="server-card-header">
-          <div class="server-status-pill" class:running={srv.status === 'running'}>
+          <div
+            class="server-status-pill"
+            class:running={srv.status === 'running'}
+            class:starting={srv.status === 'starting' || srv.status === 'creating'}
+            class:stopping={srv.status === 'stopping'}
+          >
             <span class="status-indicator-dot"></span>
             <span class="status-indicator-text">
-              {srv.status === 'running' ? 'Online' : srv.status === 'creating' ? 'Starting...' : 'Stopped'}
+              {srv.status === 'running' ? 'Online' : srv.status === 'starting' || srv.status === 'creating' ? 'Starting...' : srv.status === 'stopping' ? 'Stopping...' : 'Stopped'}
             </span>
           </div>
 
@@ -430,10 +435,11 @@
               class:btn-stop={srv.status === 'running'}
               class:btn-start={srv.status !== 'running'}
               onclick={() => handleTogglePower(srv)}
-              disabled={actionLoading[srv.id]}
+              disabled={actionLoading[srv.id] || srv.status === 'starting' || srv.status === 'stopping'}
             >
-              {#if actionLoading[srv.id]}
+              {#if actionLoading[srv.id] || srv.status === 'starting' || srv.status === 'stopping'}
                 <RotateCw size={13} class="spin" />
+                <span>{srv.status === 'stopping' ? 'Stopping...' : 'Starting...'}</span>
               {:else if srv.status === 'running'}
                 <Square size={13} />
                 <span>Stop</span>
@@ -488,16 +494,6 @@
 
       <form onsubmit={handleProvision}>
         <div class="modal-body space-y-4">
-          <!-- Project Selection -->
-          <div class="form-group">
-            <label class="form-label" for="mc-project">Target Project *</label>
-            <select id="mc-project" class="form-input" bind:value={selectedProjectId} required>
-              {#each projects as p}
-                <option value={p.id}>{p.name}{p.slug ? ` (${p.slug})` : ''}</option>
-              {/each}
-            </select>
-          </div>
-
           <!-- Server Name -->
           <div class="form-group">
             <label class="form-label" for="mc-name">Server Name *</label>
@@ -833,6 +829,16 @@
     color: var(--color-success);
   }
 
+  .server-status-pill.starting {
+    background: rgba(59, 130, 246, 0.15);
+    color: #60a5fa;
+  }
+
+  .server-status-pill.stopping {
+    background: rgba(245, 158, 11, 0.15);
+    color: #f59e0b;
+  }
+
   .status-indicator-dot {
     width: 7px;
     height: 7px;
@@ -843,6 +849,18 @@
   .server-status-pill.running .status-indicator-dot {
     background: var(--color-success);
     box-shadow: 0 0 8px var(--color-success);
+  }
+
+  .server-status-pill.starting .status-indicator-dot {
+    background: #60a5fa;
+    box-shadow: 0 0 8px #60a5fa;
+    animation: pulse 1.5s infinite;
+  }
+
+  .server-status-pill.stopping .status-indicator-dot {
+    background: #f59e0b;
+    box-shadow: 0 0 8px #f59e0b;
+    animation: pulse 1s infinite;
   }
 
   .server-badges {

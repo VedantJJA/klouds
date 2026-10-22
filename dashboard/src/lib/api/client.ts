@@ -217,13 +217,13 @@ export interface SystemMetrics {
 
 export interface MinecraftServer {
   id: string;
-  project_id: string;
+  project_id?: string;
   user_id: string;
   name: string;
   slug: string;
   server_type: 'PAPER' | 'VANILLA' | 'FABRIC' | 'FORGE' | 'NEOFORGE' | 'PURPUR' | 'SPIGOT' | 'BEDROCK';
   version: string;
-  status: 'creating' | 'running' | 'stopped' | 'failed';
+  status: 'creating' | 'starting' | 'running' | 'stopping' | 'stopped' | 'failed';
   container_id?: string;
   server_port: number;
   rcon_port: number;
@@ -243,7 +243,7 @@ export interface MinecraftServer {
 }
 
 export interface CreateMinecraftServerData {
-  project_id: string;
+  project_id?: string;
   name: string;
   server_type?: string;
   version?: string;
@@ -267,6 +267,21 @@ export interface MinecraftPlayersResponse {
   online_players: string[];
   ops: string[];
   whitelist_enabled: boolean;
+  whitelist: string[];
+}
+
+export interface MinecraftBackupItem {
+  name: string;
+  size: number;
+  size_formatted: string;
+  created_at: string;
+}
+
+export interface MinecraftGDriveUploadResponse {
+  success: boolean;
+  file_id: string;
+  file_name: string;
+  web_view_link: string;
 }
 
 export interface MinecraftFileItem {
@@ -811,6 +826,57 @@ class ApiClient {
 
   async getMinecraftPlayers(id: string): Promise<MinecraftPlayersResponse> {
     return this.request(`/api/minecraft/${id}/players`);
+  }
+
+  async toggleMinecraftWhitelist(id: string): Promise<{ whitelist_enabled: boolean; whitelist: string[] }> {
+    return this.request(`/api/minecraft/${id}/whitelist/toggle`, {
+      method: 'POST'
+    });
+  }
+
+  async addMinecraftWhitelist(id: string, username: string): Promise<{ success: boolean; whitelist: string[] }> {
+    return this.request(`/api/minecraft/${id}/whitelist/add`, {
+      method: 'POST',
+      body: JSON.stringify({ username })
+    });
+  }
+
+  async removeMinecraftWhitelist(id: string, username: string): Promise<{ success: boolean; whitelist: string[] }> {
+    return this.request(`/api/minecraft/${id}/whitelist/remove`, {
+      method: 'POST',
+      body: JSON.stringify({ username })
+    });
+  }
+
+  // Minecraft World Backups & Google Drive
+  async listMinecraftBackups(id: string): Promise<{ backups: MinecraftBackupItem[] }> {
+    return this.request(`/api/minecraft/${id}/backups`);
+  }
+
+  async createMinecraftBackup(id: string): Promise<MinecraftBackupItem> {
+    return this.request(`/api/minecraft/${id}/backups`, {
+      method: 'POST'
+    });
+  }
+
+  async deleteMinecraftBackup(id: string, name: string): Promise<{ status: string }> {
+    return this.request(`/api/minecraft/${id}/backups?name=${encodeURIComponent(name)}`, {
+      method: 'DELETE'
+    });
+  }
+
+  async restoreMinecraftBackup(id: string, name: string): Promise<{ status: string }> {
+    return this.request(`/api/minecraft/${id}/backups/restore`, {
+      method: 'POST',
+      body: JSON.stringify({ name })
+    });
+  }
+
+  async uploadMinecraftBackupToGDrive(id: string, filename: string, accessToken: string): Promise<MinecraftGDriveUploadResponse> {
+    return this.request(`/api/minecraft/${id}/backups/gdrive`, {
+      method: 'POST',
+      body: JSON.stringify({ filename, access_token: accessToken })
+    });
   }
 
   // Minecraft Dynamic Versions

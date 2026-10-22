@@ -50,7 +50,7 @@ type UpdateMinecraftServerConfigParams struct {
 	Ops              string
 }
 
-const selectMinecraftServerSQL = `SELECT id, project_id, user_id, name, slug, server_type, version,
+const selectMinecraftServerSQL = `SELECT id, COALESCE(project_id, ''), user_id, name, slug, server_type, version,
 	status, container_id, server_port, rcon_port, rcon_password, motd, difficulty, game_mode,
 	max_players, pvp, online_mode, whitelist_enabled, cpu_limit, memory_limit, disk_limit, ops,
 	created_at, updated_at
@@ -94,12 +94,12 @@ func (q *Queries) CreateMinecraftServer(ctx context.Context, arg CreateMinecraft
 			motd, difficulty, game_mode, max_players, pvp, online_mode,
 			whitelist_enabled, cpu_limit, memory_limit, disk_limit, ops
 		) VALUES (
-			$1, $2, $3, $4, $5, $6,
+			NULLIF($1, ''), $2, $3, $4, $5, $6,
 			$7, $8, $9, $10, $11,
 			$12, $13, $14, $15, $16, $17,
 			$18, $19, $20, $21, $22
 		)
-		RETURNING id, project_id, user_id, name, slug, server_type, version,
+		RETURNING id, COALESCE(project_id, ''), user_id, name, slug, server_type, version,
 			status, container_id, server_port, rcon_port, rcon_password, motd, difficulty, game_mode,
 			max_players, pvp, online_mode, whitelist_enabled, cpu_limit, memory_limit, disk_limit, ops,
 			created_at, updated_at`,
@@ -151,7 +151,7 @@ func (q *Queries) ListAllMinecraftServers(ctx context.Context) ([]MinecraftServe
 func (q *Queries) UpdateMinecraftServerStatus(ctx context.Context, id string, status string) (MinecraftServer, error) {
 	row := q.db.QueryRow(ctx,
 		`UPDATE minecraft_servers SET status = $2, updated_at = NOW() WHERE id = $1
-		 RETURNING id, project_id, user_id, name, slug, server_type, version,
+		 RETURNING id, COALESCE(project_id, ''), user_id, name, slug, server_type, version,
 			status, container_id, server_port, rcon_port, rcon_password, motd, difficulty, game_mode,
 			max_players, pvp, online_mode, whitelist_enabled, cpu_limit, memory_limit, disk_limit, ops,
 			created_at, updated_at`,
@@ -162,7 +162,7 @@ func (q *Queries) UpdateMinecraftServerStatus(ctx context.Context, id string, st
 func (q *Queries) UpdateMinecraftServerContainer(ctx context.Context, id string, containerID *string, status string) (MinecraftServer, error) {
 	row := q.db.QueryRow(ctx,
 		`UPDATE minecraft_servers SET container_id = $2, status = $3, updated_at = NOW() WHERE id = $1
-		 RETURNING id, project_id, user_id, name, slug, server_type, version,
+		 RETURNING id, COALESCE(project_id, ''), user_id, name, slug, server_type, version,
 			status, container_id, server_port, rcon_port, rcon_password, motd, difficulty, game_mode,
 			max_players, pvp, online_mode, whitelist_enabled, cpu_limit, memory_limit, disk_limit, ops,
 			created_at, updated_at`,
@@ -188,7 +188,7 @@ func (q *Queries) UpdateMinecraftServerConfig(ctx context.Context, arg UpdateMin
 			ops = $14,
 			updated_at = NOW()
 		WHERE id = $1
-		RETURNING id, project_id, user_id, name, slug, server_type, version,
+		RETURNING id, COALESCE(project_id, ''), user_id, name, slug, server_type, version,
 			status, container_id, server_port, rcon_port, rcon_password, motd, difficulty, game_mode,
 			max_players, pvp, online_mode, whitelist_enabled, cpu_limit, memory_limit, disk_limit, ops,
 			created_at, updated_at`,
